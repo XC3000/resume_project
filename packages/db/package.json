@@ -1,0 +1,20 @@
+{
+  "name": "@platform/db",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "prisma generate && tsc",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "prisma generate",
+    "db:migrate": "node --env-file=../../.env ./node_modules/prisma/build/index.js migrate dev",
+    "db:push": "node --env-file=../../.env ./node_modules/prisma/build/index.js db push"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.0.0"
+  }
+}

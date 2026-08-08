@@ -1,0 +1,17 @@
+{
+  "name": "@platform/auth",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-auth": "^1.1.18",
+    "@better-auth/api-key": "^1.1.18",
+    "@platform/db": "workspace:*",
+    "zod": "^4.0.0-beta.11"
+  }
+}

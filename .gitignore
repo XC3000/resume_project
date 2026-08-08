@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+.next/
+out/
+
+# Environment variables
+.env
+.env*.local
+
+# Turborepo
+.turbo/
+
+# System / IDE
+.DS_Store
+.vscode/
+.idea/

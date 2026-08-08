@@ -1,0 +1,313 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema", "postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  schemas    = ["shared", "triage", "analytics"]
+  extensions = [vector]
+}
+
+enum IncidentStatus {
+  OPEN
+  TRIAGED
+  RESOLVED
+  PENDING_QUOTA
+
+  @@schema("triage")
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@schema("triage")
+}
+
+enum MetricGranularity {
+  MINUTE
+  HOUR
+
+  @@schema("analytics")
+}
+
+// ==========================================
+// SHARED SCHEMA (Authentication & Multi-tenant)
+// ==========================================
+
+model User {
+  id            String       @id
+  name          String
+  email         String
+  emailVerified Boolean      @default(false)
+  image         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  members       Member[]
+  invitations   Invitation[]
+
+  @@unique([email])
+  @@map("user")
+  @@schema("shared")
+}
+
+model Session {
+  id                   String   @id
+  expiresAt            DateTime
+  token                String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  ipAddress            String?
+  userAgent            String?
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeOrganizationId String?
+
+  @@unique([token])
+  @@index([userId])
+  @@index([activeOrganizationId])
+  @@map("session")
+  @@schema("shared")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+  @@schema("shared")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+  @@schema("shared")
+}
+
+model Organization {
+  id          String       @id
+  name        String
+  slug        String
+  logo        String?
+  createdAt   DateTime
+  metadata    String?
+  members     Member[]
+  invitations Invitation[]
+
+  @@unique([slug])
+  @@map("organization")
+  @@schema("shared")
+}
+
+model Member {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           String       @default("member")
+  createdAt      DateTime
+
+  @@index([organizationId])
+  @@index([userId])
+  @@map("member")
+  @@schema("shared")
+}
+
+model Invitation {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  role           String?
+  status         String       @default("pending")
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  inviterId      String
+  user           User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+  @@index([inviterId])
+  @@map("invitation")
+  @@schema("shared")
+}
+
+model Apikey {
+  id                  String    @id
+  configId            String    @default("default")
+  name                String?
+  start               String?
+  referenceId         String
+  prefix              String?
+  key                 String
+  refillInterval      Int?
+  refillAmount        Int?
+  lastRefillAt        DateTime?
+  enabled             Boolean?  @default(true)
+  rateLimitEnabled    Boolean?  @default(true)
+  rateLimitTimeWindow Int?      @default(86400000)
+  rateLimitMax        Int?      @default(10)
+  requestCount        Int?      @default(0)
+  remaining           Int?
+  lastRequest         DateTime?
+  expiresAt           DateTime?
+  createdAt           DateTime
+  updatedAt           DateTime
+  permissions         String?
+  metadata            String?
+
+  @@index([configId])
+  @@index([referenceId])
+  @@index([key])
+  @@map("apikey")
+  @@schema("shared")
+}
+
+// ==========================================
+// TRIAGE SCHEMA (Incidents & Failure analysis)
+// ==========================================
+
+model Incident {
+  id                String             @id @default(uuid())
+  organizationId    String
+  source            String
+  externalId        String?
+  title             String
+  status            IncidentStatus     @default(OPEN)
+  severity          Severity
+  classification    String?
+  suggestedFix      String?
+  rootCauseHint     String?
+  createdAt         DateTime           @default(now())
+  resolvedAt        DateTime?
+  logChunks         LogChunk[]
+  failureSignatures FailureSignature[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([severity])
+  @@index([createdAt])
+  @@index([resolvedAt])
+  @@index([source, externalId])
+  @@schema("triage")
+}
+
+model LogChunk {
+  id          String   @id @default(uuid())
+  incidentId  String
+  content     String
+  startOffset Int?
+  endOffset   Int?
+  sequence    Int
+  justifies   Boolean  @default(false)
+  incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId])
+  @@index([sequence])
+  @@schema("triage")
+}
+
+model FailureSignature {
+  id             String                      @id @default(uuid())
+  organizationId String
+  incidentId     String
+  normalisedText String
+  embedding      Unsupported("halfvec(768)")
+  createdAt      DateTime                    @default(now())
+  incident       Incident                    @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId])
+  @@index([organizationId])
+  @@index([createdAt])
+  @@schema("triage")
+}
+
+model LlmUsage {
+  id             String   @id @default(uuid())
+  organizationId String
+  day            DateTime @db.Date
+  tokensIn       Int
+  tokensOut      Int
+  callCount      Int
+
+  @@unique([organizationId, day])
+  @@index([day])
+  @@schema("triage")
+}
+
+// ==========================================
+// ANALYTICS SCHEMA (Sources & Metric rollups)
+// ==========================================
+
+model Source {
+  id              String           @id @default(uuid())
+  organizationId  String
+  name            String
+  apiKeyId        String
+  createdAt       DateTime         @default(now())
+  metricRollups   MetricRollup[]
+  processedEvents ProcessedEvent[]
+
+  @@index([organizationId])
+  @@index([apiKeyId])
+  @@index([createdAt])
+  @@schema("analytics")
+}
+
+model MetricRollup {
+  id          String            @id @default(uuid())
+  sourceId    String
+  metricName  String
+  bucketStart DateTime          @db.Timestamptz
+  granularity MetricGranularity
+  count       Int
+  sum         Float
+  min         Float
+  max         Float
+  source      Source            @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, metricName, bucketStart, granularity])
+  @@index([sourceId, metricName, bucketStart])
+  @@index([bucketStart])
+  @@index([metricName])
+  @@schema("analytics")
+}
+
+model ProcessedEvent {
+  id          String   @id
+  sourceId    String
+  processedAt DateTime @default(now())
+  source      Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([sourceId])
+  @@index([processedAt])
+  @@schema("analytics")
+}
