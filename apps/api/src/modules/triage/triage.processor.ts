@@ -38,6 +38,10 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
       },
     );
 
+    this.worker.on('error', (err) => {
+      this.logger.error(`BullMQ worker error: ${err.message}`);
+    });
+
     this.worker.on('failed', async (job, err) => {
       this.logger.error(`Job ${job?.id} failed: ${err.message}`, err.stack);
       

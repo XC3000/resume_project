@@ -1,3 +1,34 @@
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Pre-load .env file before module initialization if environment variables are missing
+(function loadEnv() {
+  const envPaths = [
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(process.cwd(), '../../.env'),
+    path.resolve(__dirname, '../../../.env'),
+  ];
+  for (const envPath of envPaths) {
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+          const eqIdx = trimmed.indexOf('=');
+          const key = trimmed.slice(0, eqIdx).trim();
+          let val = trimmed.slice(eqIdx + 1).trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          if (!process.env[key]) {
+            process.env[key] = val;
+          }
+        }
+      }
+    }
+  }
+})();
+
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { json, raw, Request, Response, NextFunction } from 'express';
@@ -47,12 +78,26 @@ async function bootstrap() {
   // to parse and verify signatures/payloads (e.g. signup flow, webhooks).
   const app = await NestFactory.create(AppModule, { bodyParser: false });
 
+  // Enable CORS with credentials allowed and origins read from env
+  app.enableCors({
+    origin: [
+      process.env.TRIAGE_WEB_URL || 'http://localhost:3001',
+      process.env.ANALYTICS_WEB_URL || 'http://localhost:3002',
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://localhost:3002',
+    ],
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Cookie'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
+
   // WARNING: MIDDLEWARE ORDER IS CRITICAL. DO NOT CHANGE THIS ORDER.
   //
-  // 1. Mount public route rate limiter first.
+  // 1. Mount public route rate limiter.
   app.use(rateLimiter);
 
-  // 2. Mount the Better Auth node handler at '/api/auth' FIRST, before any body-parsing middleware.
+  // 2. Mount the Better Auth node handler at '/api/auth' BEFORE any body-parsing middleware.
   //    Better Auth needs the raw request body stream. If express.json() is applied first,
   //    it consumes the request stream, which silently breaks Better Auth signup.
   //
@@ -68,15 +113,6 @@ async function bootstrap() {
     } else {
       json()(req, res, next);
     }
-  });
-
-  // Enable CORS with credentials allowed and origins read from env
-  app.enableCors({
-    origin: [
-      process.env.TRIAGE_WEB_URL,
-      process.env.ANALYTICS_WEB_URL,
-    ].filter((origin): origin is string => !!origin),
-    credentials: true,
   });
 
   await app.listen(process.env.PORT ?? 3000);

@@ -19,6 +19,7 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@platform/auth": "workspace:*",
+    "@platform/contracts": "workspace:*",
     "@platform/db": "workspace:*",
     "better-auth": "^1.1.18",
     "@better-auth/api-key": "^1.1.18",

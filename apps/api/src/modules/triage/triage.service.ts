@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CONNECTION } from './redis.provider';
@@ -9,12 +9,21 @@ export class TriageService implements OnModuleDestroy {
   public readonly triageQueue: Queue;
   public readonly dlqQueue: Queue;
 
+  private readonly logger = new Logger(TriageService.name);
+
   constructor(@Inject(REDIS_CONNECTION) private readonly redisConnection: Redis) {
     this.triageQueue = new Queue('triage-logs', {
       connection: this.redisConnection,
     });
     this.dlqQueue = new Queue('triage-dlq', {
       connection: this.redisConnection,
+    });
+
+    this.triageQueue.on('error', (err) => {
+      this.logger.error(`Triage Queue error: ${err.message}`);
+    });
+    this.dlqQueue.on('error', (err) => {
+      this.logger.error(`DLQ Queue error: ${err.message}`);
     });
   }
 
