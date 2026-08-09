@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { organization } from "better-auth/plugins";
 import { apiKey } from "@better-auth/api-key";
-import { prisma } from "@platform/db";
+import { unsafeUnscopedClient } from "@platform/db";
 import { z } from "zod";
 
 declare const process: any;
@@ -11,7 +11,7 @@ declare const process: any;
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL || "http://localhost:3000",
   secret: process.env.BETTER_AUTH_SECRET,
-  database: prismaAdapter(prisma, {
+  database: prismaAdapter(unsafeUnscopedClient, {
     provider: "postgresql",
   }),
   emailAndPassword: {

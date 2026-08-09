@@ -3,7 +3,7 @@ import { Worker, Job } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CONNECTION } from './redis.provider';
 import { TriageService } from './triage.service';
-import { prisma } from '@platform/db';
+import { scopedClient } from '@platform/db';
 import StreamZip from 'node-stream-zip';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -80,16 +80,19 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
     const { runId, owner, repo } = job.data;
     this.logger.log(`Processing log download for Run ID: ${runId} (Repo: ${owner}/${repo})`);
 
+    // Use system database client for shared-schema queries
+    const systemDb = scopedClient('system');
+
     // 1. Map organization based on github repository owner slug
     const ownerSlug = owner.toLowerCase();
-    let org = await prisma.organization.findFirst({
+    let org = await systemDb.organization.findFirst({
       where: { slug: ownerSlug },
     });
 
     let targetOrgId: string;
     if (!org) {
       this.logger.log(`No organization found for slug '${ownerSlug}'. Creating a default triage org.`);
-      const newOrg = await prisma.organization.create({
+      const newOrg = await systemDb.organization.create({
         data: {
           id: crypto.randomUUID(),
           name: `${owner} Triage Org`,
@@ -104,8 +107,10 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
     targetOrgId = org.id;
 
     // Map project based on repository slug
+    const db = scopedClient(targetOrgId);
+
     const projectSlug = repo.toLowerCase();
-    let project = await prisma.project.findFirst({
+    let project = await db.project.findFirst({
       where: {
         organizationId: targetOrgId,
         slug: projectSlug,
@@ -114,7 +119,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
 
     if (!project) {
       this.logger.log(`No project found for slug '${projectSlug}'. Creating a default project.`);
-      project = await prisma.project.create({
+      project = await db.project.create({
         data: {
           id: crypto.randomUUID(),
           organizationId: targetOrgId,
@@ -239,7 +244,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
 
       // 7. Save the Incident and ContextChunks inside a single database transaction
       this.logger.log(`Saving Incident and ${logChunksData.length} ContextChunks to the database...`);
-      const incident = await prisma.incident.create({
+      const incident = await db.incident.create({
         data: {
           organizationId: targetOrgId,
           projectId: project.id,
@@ -297,7 +302,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
       for (const sig of similarSignatures) {
         if (sig.incidentId === incident.id) continue;
 
-        const histIncident = await prisma.incident.findUnique({
+        const histIncident = await db.incident.findUnique({
           where: { id: sig.incidentId },
           include: {
             contextChunks: {
@@ -315,7 +320,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
       const today = new Date();
       today.setUTCHours(0, 0, 0, 0);
 
-      const usage = await prisma.llmUsage.findUnique({
+      const usage = await db.llmUsage.findUnique({
         where: {
           organizationId_day: {
             organizationId: targetOrgId,
@@ -329,7 +334,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
 
       if (currentTokens >= cap) {
         this.logger.warn(`Daily LLM token cap exceeded for org ${targetOrgId}. Setting status to PENDING_QUOTA.`);
-        await prisma.incident.update({
+        await db.incident.update({
           where: { id: incident.id },
           data: { status: 'PENDING_QUOTA' },
         });
@@ -352,7 +357,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
       if (!classifierData) {
         // Fallback: mark incident as TRIAGED with null values on validation failure
         this.logger.warn(`LLM classification failed validation. Falling back to null classification for incident: ${incident.id}`);
-        await prisma.incident.update({
+        await db.incident.update({
           where: { id: incident.id },
           data: {
             status: 'TRIAGED',
@@ -368,8 +373,8 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
       this.logger.log(`Classification returned. Tokens used: ${tokensIn} In, ${tokensOut} Out. Persisting result...`);
 
       // Atomically update LLM usage, Incident classification, and justifying LogChunks
-      await prisma.$transaction([
-        prisma.llmUsage.upsert({
+      await db.$transaction([
+        db.llmUsage.upsert({
           where: {
             organizationId_day: {
               organizationId: targetOrgId,
@@ -390,7 +395,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
             callCount: { increment: 1 },
           },
         }),
-        prisma.incident.update({
+        db.incident.update({
           where: { id: incident.id },
           data: {
             status: 'TRIAGED',
@@ -400,7 +405,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
             severity: result.severity,
           },
         }),
-        prisma.contextChunk.updateMany({
+        db.contextChunk.updateMany({
           where: {
             incidentId: incident.id,
             id: { in: result.justifyingLogChunkIds },

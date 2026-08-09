@@ -12,6 +12,7 @@
     "start:prod": "node dist/main",
     "typecheck": "tsc --noEmit",
     "test:normaliser": "ts-node src/modules/triage/normaliser.test.ts",
+    "test:isolation": "ts-node src/auth/isolation.test.ts",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix"
   },
   "dependencies": {

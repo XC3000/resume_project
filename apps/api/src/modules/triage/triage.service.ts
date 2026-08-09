@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CONNECTION } from './redis.provider';
-import { prisma } from '@platform/db';
+import { scopedClient } from '@platform/db';
 
 @Injectable()
 export class TriageService implements OnModuleDestroy {
@@ -53,7 +53,8 @@ export class TriageService implements OnModuleDestroy {
     const embeddingString = `[${embedding.join(',')}]`;
     const createdAt = new Date();
 
-    await prisma.$executeRaw`
+    const db = scopedClient(organizationId);
+    await db.$executeRaw`
       INSERT INTO "triage"."failure_signature" ("id", "organizationId", "projectId", "incidentId", "normalisedText", "embedding", "createdAt")
       VALUES (${id}, ${organizationId}, ${projectId}, ${incidentId}, ${normalisedText}, ${embeddingString}::halfvec, ${createdAt})
     `;
@@ -77,7 +78,8 @@ export class TriageService implements OnModuleDestroy {
   }>> {
     const embeddingString = `[${embedding.join(',')}]`;
 
-    return prisma.$queryRaw<Array<{
+    const db = scopedClient(organizationId);
+    return db.$queryRaw<Array<{
       id: string;
       organizationId: string;
       incidentId: string;
