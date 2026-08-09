@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { RedisConnectionProvider } from './redis.provider';
+import { RedisConnectionProvider, REDIS_CONNECTION } from './redis.provider';
 import { TriageService } from './triage.service';
 import { TriageController } from './triage.controller';
 import { TriageProcessor } from './triage.processor';
@@ -18,6 +18,6 @@ import { ClassifierService } from './classifier.service';
       useClass: GeminiEmbeddingService,
     },
   ],
-  exports: [TriageService, 'IEmbeddingService', ClassifierService],
+  exports: [TriageService, 'IEmbeddingService', ClassifierService, REDIS_CONNECTION, RedisConnectionProvider],
 })
 export class TriageModule {}

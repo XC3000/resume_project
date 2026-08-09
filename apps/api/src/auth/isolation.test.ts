@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as crypto from 'crypto';
 
 // Stub bullmq using Node's require hook to prevent Redis connection retries in test
 const Module = require('module');
@@ -25,6 +26,7 @@ import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { auth } from '@platform/auth';
 import { OrgsService } from '../modules/orgs/orgs.service';
+import { GithubService } from '../modules/github/github.service';
 
 // Helper to mock NestJS ExecutionContext
 function createMockExecutionContext(request: any, handler?: any): ExecutionContext {
@@ -45,6 +47,7 @@ async function runIsolationSuite() {
 
   // 1. Database Clean up
   console.log('Cleaning up database tables...');
+  await unsafeUnscopedClient.githubInstallation.deleteMany({});
   await unsafeUnscopedClient.failureSignature.deleteMany({});
   await unsafeUnscopedClient.contextChunk.deleteMany({});
   await unsafeUnscopedClient.incident.deleteMany({});
@@ -474,6 +477,184 @@ async function runIsolationSuite() {
     where: { id: teamOrg.id },
   });
   assert.ok(!checkTeamOrgExists, "Team organization was not deleted!");
+
+  // --- TEST CASE 11: GITHUB APP TOKEN CACHING & CONCURRENCY (REDIS MUTEX) ---
+  console.log('Test Case 11: GitHub App Token Caching & Concurrency (Redis Mutex)');
+
+  // Stub environment variables for GitHub App if they are not set
+  process.env.GITHUB_APP_ID = process.env.GITHUB_APP_ID || '123456';
+  if (!process.env.GITHUB_APP_PRIVATE_KEY_BASE64) {
+    const { privateKey } = crypto.generateKeyPairSync('rsa' as any, {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    process.env.GITHUB_APP_PRIVATE_KEY_BASE64 = Buffer.from(privateKey as any).toString('base64');
+  }
+  process.env.GITHUB_APP_WEBHOOK_SECRET = process.env.GITHUB_APP_WEBHOOK_SECRET || 'webhook_secret';
+
+  // Create an in-memory Redis mock to test the caching logic
+  const mockRedisStore = new Map<string, string>();
+  const mockRedis = {
+    get: async (key: string) => mockRedisStore.get(key) || null,
+    set: async (key: string, value: string, ...args: any[]) => {
+      const isNx = args.includes('NX');
+      if (isNx && mockRedisStore.has(key)) {
+        return null;
+      }
+      mockRedisStore.set(key, value);
+      return 'OK';
+    },
+    del: async (key: string) => {
+      mockRedisStore.delete(key);
+      return 1;
+    },
+  } as any;
+
+  // Stub global fetch
+  const originalFetch = globalThis.fetch;
+  let fetchCallCount = 0;
+  globalThis.fetch = async (url: any, options: any) => {
+    fetchCallCount++;
+    const urlStr = url.toString();
+    if (urlStr.includes('/access_tokens')) {
+      return {
+        ok: true,
+        json: async () => ({ token: 'mocked-installation-token-123' }),
+      } as any;
+    }
+    if (urlStr.includes('/app/installations/')) {
+      return {
+        ok: true,
+        json: async () => ({
+          account: { login: 'mocked-account', type: 'Organization' },
+          repository_selection: 'all',
+        }),
+      } as any;
+    }
+    if (urlStr.includes('/installation/repositories')) {
+      return {
+        ok: true,
+        json: async () => ({
+          repositories: [
+            { id: 101, name: 'repo-1', full_name: 'mocked-account/repo-1', private: true },
+          ],
+        }),
+      } as any;
+    }
+    return originalFetch(url, options);
+  };
+
+  const githubService = new GithubService(mockRedis);
+
+  // First fetch: should call fetch (mocked) and cache token
+  const token1 = await githubService.getInstallationToken('test-inst-1');
+  assert.strictEqual(token1, 'mocked-installation-token-123');
+  assert.strictEqual(fetchCallCount, 1);
+
+  // Second fetch: should read from cache (fetch call count remains 1)
+  const token2 = await githubService.getInstallationToken('test-inst-1');
+  assert.strictEqual(token2, 'mocked-installation-token-123');
+  assert.strictEqual(fetchCallCount, 1);
+
+  // --- TEST CASE 12: GITHUB APP ORGANIZATION BINDING ---
+  console.log('Test Case 12: GitHub App Organization Binding');
+  
+  // Clean up any existing installations
+  await unsafeUnscopedClient.githubInstallation.deleteMany({});
+
+  // Bind installation to Org A
+  const bindRes1 = await githubService.bindInstallation(orgA.id, '12345', 'install');
+  assert.ok(bindRes1);
+  assert.strictEqual(bindRes1.organizationId, orgA.id);
+  assert.strictEqual(bindRes1.installationId, '12345');
+
+  // Attempt to bind the SAME installation to Org B: must throw security violation!
+  await assert.rejects(
+    async () => {
+      await githubService.bindInstallation(orgB.id, '12345', 'install');
+    },
+    /already bound to another organization/i,
+    "Was able to bind an installation to a second organization!"
+  );
+
+  // --- TEST CASE 13: GITHUB APP WEBHOOKS AND ARCHIVING ---
+  console.log('Test Case 13: GitHub App Webhooks and Archiving');
+
+  // Create a project linked to githubRepoId 202
+  const project = await unsafeUnscopedClient.project.create({
+    data: {
+      id: 'test-webhook-proj-id',
+      organizationId: orgA.id,
+      name: 'Webhook Project',
+      slug: 'webhook-proj',
+      githubRepoId: 202n,
+      webhookSecret: 'sec',
+    },
+  });
+
+  // Verify project is not archived initially
+  assert.strictEqual(project.archivedAt, null);
+
+  // Webhook: payload for repositories_removed
+  const webhookBodyRemoved = JSON.stringify({
+    action: 'removed',
+    installation: { id: 12345 },
+    repositories_removed: [{ id: 202, full_name: 'orgA/repo-removed' }],
+  });
+
+  const secret = 'webhook_secret';
+  const hmac = crypto.createHmac('sha256', secret);
+  hmac.update(webhookBodyRemoved);
+  const signature = 'sha256=' + hmac.digest('hex');
+
+  // Process repositories_removed webhook
+  await githubService.processWebhook(Buffer.from(webhookBodyRemoved, 'utf8'), signature);
+
+  // Check if project is archived
+  const updatedProj1 = await unsafeUnscopedClient.project.findUnique({
+    where: { id: project.id },
+  });
+  assert.ok(updatedProj1?.archivedAt, "Project was not archived when repository was removed!");
+
+  // Create another project linked to repo 303
+  const project2 = await unsafeUnscopedClient.project.create({
+    data: {
+      id: 'test-webhook-proj-2-id',
+      organizationId: orgA.id,
+      name: 'Webhook Project 2',
+      slug: 'webhook-proj-2',
+      githubRepoId: 303n,
+      webhookSecret: 'sec',
+    },
+  });
+
+  // Webhook: payload for installation deleted
+  const webhookBodyDeleted = JSON.stringify({
+    action: 'deleted',
+    installation: { id: 12345 },
+  });
+
+  const hmacDel = crypto.createHmac('sha256', secret);
+  hmacDel.update(webhookBodyDeleted);
+  const signatureDel = 'sha256=' + hmacDel.digest('hex');
+
+  // Process installation deleted webhook
+  await githubService.processWebhook(Buffer.from(webhookBodyDeleted, 'utf8'), signatureDel);
+
+  // Verify project2 is archived
+  const updatedProj2 = await unsafeUnscopedClient.project.findUnique({
+    where: { id: project2.id },
+  });
+  assert.ok(updatedProj2?.archivedAt, "Project was not archived when installation was deleted!");
+
+  // Verify GithubInstallation record is deleted from DB
+  const checkInstExists = await unsafeUnscopedClient.githubInstallation.findUnique({
+    where: { installationId: 12345n },
+  });
+  assert.ok(!checkInstExists, "GithubInstallation was not deleted!");
+
+  // Restore fetch
+  globalThis.fetch = originalFetch;
 
   console.log('--- ALL TENANT ISOLATION TESTS PASSED SUCCESSFULLY! ---');
 }

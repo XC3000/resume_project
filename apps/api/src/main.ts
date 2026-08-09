@@ -99,14 +99,14 @@ async function bootstrap() {
   //    Better Auth needs the raw request body stream. If express.json() is applied first,
   //    it consumes the request stream, which silently breaks Better Auth signup.
   //
-  // 3. Exclude '/triage/webhooks/github' from the global JSON body parser. Instead, parse it as a
-  //    raw buffer via express.raw({ type: '*/*' }) to keep the raw payload intact for timing-safe
+  // 3. Exclude '/triage/webhooks/github' and '/github/webhooks' from the global JSON body parser. Instead, parse them
+  //    as raw buffers via express.raw({ type: '*/*' }) to keep the raw payload intact for timing-safe
   //    HMAC signature verification.
   //
   // 4. Apply express.json() middleware for all other routes after mounting Better Auth.
   app.use('/api/auth', toNodeHandler(auth));
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (req.path === '/triage/webhooks/github') {
+    if (req.path === '/triage/webhooks/github' || req.path === '/github/webhooks') {
       raw({ type: '*/*' })(req, res, next);
     } else {
       json()(req, res, next);
