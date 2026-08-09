@@ -15,6 +15,7 @@ import { normaliseLog } from './normaliser';
 import { IEmbeddingService } from './embedding.service';
 import { ClassifierService } from './classifier.service';
 import { GithubService } from '../github/github.service';
+import { PLAN_CONFIGS } from '@platform/contracts';
 
 @Injectable()
 export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
@@ -325,7 +326,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
       this.logger.log('Executing similarity search for historical incidents...');
       const similarSignatures = await this.triageService.findSimilarFailureSignatures(targetOrgId, project.id, embedding);
       
-      const similarIncidents = [];
+      const similarIncidents: any[] = [];
       for (const sig of similarSignatures) {
         if (sig.incidentId === incident.id) continue;
 
@@ -344,46 +345,139 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
 
       // 10. Check Quota & Call Classifier
       this.logger.log('Verifying LLM token quota...');
-      const today = new Date();
-      today.setUTCHours(0, 0, 0, 0);
-
-      const usage = await db.llmUsage.findUnique({
-        where: {
-          organizationId_day: {
-            organizationId: targetOrgId,
-            day: today,
-          },
-        },
-      });
-
-      const cap = parseInt(process.env.DAILY_TOKEN_CAP || '500000', 10);
-      const currentTokens = usage ? (usage.tokensIn + usage.tokensOut) : 0;
-
-      if (currentTokens >= cap) {
-        this.logger.warn(`Daily LLM token cap exceeded for org ${targetOrgId}. Setting status to PENDING_QUOTA.`);
+      
+      if (process.env.DEMO_MODE === 'true' && targetOrgId === 'demo-org-id') {
+        this.logger.log('Demo mode active: bypassing Gemini LLM classification for demo organization.');
         await db.incident.update({
           where: { id: incident.id },
-          data: { status: 'PENDING_QUOTA' },
+          data: {
+            status: 'TRIAGED',
+            classification: 'Demo Pipeline Failure',
+            rootCauseHint: 'Simulated connection failure due to mock environment state.',
+            suggestedFix: 'Re-run build pipeline or switch to an authenticated tenant scope.',
+            severity: 'MEDIUM',
+          },
         });
         return;
       }
 
-      this.logger.log('Calling incident classification LLM...');
-      const classifierData = await this.classifierService.classifyIncident(
-        dbLogChunks.map((c: { id: string; content: string; sequence: number }) => ({ id: c.id, content: c.content, sequence: c.sequence })),
-        similarIncidents.map((i) => ({
-          id: i.id,
-          classification: i.classification,
-          severity: i.severity,
-          rootCauseHint: i.rootCauseHint,
-          suggestedFix: i.suggestedFix,
-          logChunks: i.contextChunks.map((c: { content: string }) => ({ content: c.content })),
-        }))
-      );
+      let quotaExceeded = false;
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
 
-      if (!classifierData) {
-        // Fallback: mark incident as TRIAGED with null values on validation failure
-        this.logger.warn(`LLM classification failed validation. Falling back to null classification for incident: ${incident.id}`);
+      try {
+        await db.$transaction(async (tx) => {
+          // Get the plan config for this org
+          const org = await tx.organization.findUnique({
+            where: { id: targetOrgId },
+            select: { plan: true },
+          });
+          const plan = org?.plan || 'FREE';
+          const planConfig = PLAN_CONFIGS[plan];
+
+          // Ensure row exists for today
+          await tx.$executeRaw`
+            INSERT INTO "triage"."llm_usage" ("id", "organizationId", "day", "tokensIn", "tokensOut", "callCount")
+            VALUES (${crypto.randomUUID()}, ${targetOrgId}, ${today}, 0, 0, 0)
+            ON CONFLICT ("organizationId", "day") DO NOTHING
+          `;
+
+          // Lock row FOR UPDATE
+          const usageRows = await tx.$queryRaw<Array<{ tokensIn: number; tokensOut: number; callCount: number }>>`
+            SELECT "tokensIn", "tokensOut", "callCount"
+            FROM "triage"."llm_usage"
+            WHERE "organizationId" = ${targetOrgId} AND "day" = ${today}
+            FOR UPDATE
+          `;
+          const usage = usageRows[0] || { tokensIn: 0, tokensOut: 0, callCount: 0 };
+          const currentTokens = usage.tokensIn + usage.tokensOut;
+
+          // Check daily token cap
+          if (currentTokens >= planConfig.dailyTokenCap) {
+            quotaExceeded = true;
+            throw new Error('QUOTA_EXCEEDED');
+          }
+
+          // Check global spend kill switch
+          const globalUsageRows = await tx.$queryRaw<Array<{ total: number }>>`
+            SELECT COALESCE(SUM("tokensIn" + "tokensOut"), 0)::int as "total"
+            FROM "triage"."llm_usage"
+            WHERE "day" = ${today}
+          `;
+          const globalTokens = globalUsageRows[0]?.total || 0;
+          const globalCap = parseInt(process.env.GLOBAL_DAILY_TOKEN_CAP || '50000000', 10);
+          if (globalTokens >= globalCap) {
+            this.logger.warn(`Global daily cap exceeded: ${globalTokens} tokens today.`);
+            quotaExceeded = true;
+            throw new Error('GLOBAL_QUOTA_EXCEEDED');
+          }
+
+          // Call LLM
+          this.logger.log('Calling incident classification LLM...');
+          const classifierData = await this.classifierService.classifyIncident(
+            dbLogChunks.map((c: any) => ({ id: c.id, content: c.content, sequence: c.sequence })),
+            similarIncidents.map((i) => ({
+              id: i.id,
+              classification: i.classification,
+              severity: i.severity,
+              rootCauseHint: i.rootCauseHint,
+              suggestedFix: i.suggestedFix,
+              logChunks: i.contextChunks.map((c: { content: string }) => ({ content: c.content })),
+            }))
+          );
+
+          if (!classifierData) {
+            throw new Error('CLASSIFICATION_FAILED');
+          }
+
+          const { tokensIn, tokensOut, result } = classifierData;
+          this.logger.log(`Classification returned. Tokens used: ${tokensIn} In, ${tokensOut} Out. Persisting...`);
+
+          // Update usage
+          await tx.$executeRaw`
+            UPDATE "triage"."llm_usage"
+            SET "tokensIn" = "tokensIn" + ${tokensIn},
+                "tokensOut" = "tokensOut" + ${tokensOut},
+                "callCount" = "callCount" + 1
+            WHERE "organizationId" = ${targetOrgId} AND "day" = ${today}
+          `;
+
+          // Update incident details
+          await tx.incident.update({
+            where: { id: incident.id },
+            data: {
+              status: 'TRIAGED',
+              classification: result.category,
+              suggestedFix: result.suggestedFix,
+              rootCauseHint: result.rootCauseHint,
+              severity: result.severity,
+            },
+          });
+
+          // Update justifying chunks
+          await tx.contextChunk.updateMany({
+            where: {
+              incidentId: incident.id,
+              id: { in: result.justifyingLogChunkIds },
+            },
+            data: {
+              justifies: true,
+            },
+          });
+        }, { timeout: 30000 });
+
+        this.logger.log(`Incident classification successfully persisted for: ${incident.id}`);
+      } catch (err: any) {
+        if (quotaExceeded) {
+          this.logger.warn(`Daily LLM token cap exceeded for org ${targetOrgId}. Setting status to PENDING_QUOTA.`);
+          await db.incident.update({
+            where: { id: incident.id },
+            data: { status: 'PENDING_QUOTA' },
+          });
+          return;
+        }
+
+        this.logger.warn(`LLM classification failed or transaction abort: ${err.message}`);
         await db.incident.update({
           where: { id: incident.id },
           data: {
@@ -393,57 +487,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
             rootCauseHint: null,
           },
         });
-        return;
       }
-
-      const { tokensIn, tokensOut, result } = classifierData;
-      this.logger.log(`Classification returned. Tokens used: ${tokensIn} In, ${tokensOut} Out. Persisting result...`);
-
-      // Atomically update LLM usage, Incident classification, and justifying LogChunks
-      await db.$transaction([
-        db.llmUsage.upsert({
-          where: {
-            organizationId_day: {
-              organizationId: targetOrgId,
-              day: today,
-            },
-          },
-          create: {
-            id: crypto.randomUUID(),
-            organizationId: targetOrgId,
-            day: today,
-            tokensIn,
-            tokensOut,
-            callCount: 1,
-          },
-          update: {
-            tokensIn: { increment: tokensIn },
-            tokensOut: { increment: tokensOut },
-            callCount: { increment: 1 },
-          },
-        }),
-        db.incident.update({
-          where: { id: incident.id },
-          data: {
-            status: 'TRIAGED',
-            classification: result.category,
-            suggestedFix: result.suggestedFix,
-            rootCauseHint: result.rootCauseHint,
-            severity: result.severity,
-          },
-        }),
-        db.contextChunk.updateMany({
-          where: {
-            incidentId: incident.id,
-            id: { in: result.justifyingLogChunkIds },
-          },
-          data: {
-            justifies: true,
-          },
-        }),
-      ]);
-
-      this.logger.log(`Incident classification successfully persisted for: ${incident.id}`);
     } finally {
       // 11. Always delete the temporary ZIP archive
       try {

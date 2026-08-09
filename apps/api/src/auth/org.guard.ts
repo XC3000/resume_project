@@ -28,6 +28,11 @@ export class OrgGuard implements CanActivate {
     }
 
     if (request.user) {
+      if (process.env.DEMO_MODE === 'true' && activeOrgId === 'demo-org-id') {
+        this.orgContext.setOrg(activeOrgId, 'viewer');
+        return true;
+      }
+
       // Authenticated via user session: we must verify membership
       const member = await unsafeUnscopedClient.member.findFirst({
         where: {

@@ -5,12 +5,14 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // 1. Exclude public static files, assets, and unauthenticated auth routes
+  // Also allow unauthenticated demo visitors if DEMO_MODE is enabled
   if (
     pathname === '/login' ||
     pathname === '/signup' ||
     pathname.startsWith('/invite/') ||
     pathname.startsWith('/_next') ||
-    pathname.includes('.')
+    pathname.includes('.') ||
+    (process.env.DEMO_MODE === 'true' && (pathname === '/demo' || pathname.startsWith('/demo/')))
   ) {
     return NextResponse.next();
   }

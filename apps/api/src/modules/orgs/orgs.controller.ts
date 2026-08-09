@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { AuthGuard } from '../../auth/auth.guard';
 import { OrgGuard } from '../../auth/org.guard';
 import { RoleGuard } from '../../auth/role.guard';
@@ -6,7 +6,8 @@ import { RequireRole, Role } from '../../auth/require-role.decorator';
 import { OrgContext } from '../../auth/org-context';
 import { OrgsService } from './orgs.service';
 import { CreateOrgDto, UpdateOrgSettingsDto, CreateApiKeyDto, InviteMemberDto, AcceptInviteDto, TransferOwnershipDto } from './orgs.dto';
-import { scopedClient } from '@platform/db';
+import { scopedClient, unsafeUnscopedClient } from '@platform/db';
+import { PLAN_CONFIGS } from '@platform/contracts';
 
 @Controller('orgs')
 export class OrgsController {
@@ -48,6 +49,24 @@ export class OrgsController {
   @RequireRole(Role.ADMIN)
   async createApiKey(@Req() req: any, @Body() dto: CreateApiKeyDto) {
     const activeOrgId = this.orgContext.getOrgId();
+    
+    // Check API Key limits
+    const org = await unsafeUnscopedClient.organization.findUnique({
+      where: { id: activeOrgId },
+      select: { plan: true },
+    });
+    const plan = org?.plan || 'FREE';
+    const planConfig = PLAN_CONFIGS[plan];
+
+    const db = scopedClient(activeOrgId);
+    const keyCount = await db.apiKey.count({
+      where: { organizationId: activeOrgId },
+    });
+
+    if (keyCount >= planConfig.maxKeys) {
+      throw new BadRequestException(`API key limit exceeded for this plan (${planConfig.maxKeys}).`);
+    }
+
     return this.orgsService.createApiKey(activeOrgId, req.user.id, dto.name, dto.scopes, dto.expiresAt);
   }
 
@@ -72,6 +91,27 @@ export class OrgsController {
   @RequireRole(Role.ADMIN)
   async inviteMember(@Req() req: any, @Body() dto: InviteMemberDto) {
     const activeOrgId = this.orgContext.getOrgId();
+    
+    // Check Workspace Members limits
+    const org = await unsafeUnscopedClient.organization.findUnique({
+      where: { id: activeOrgId },
+      select: { plan: true },
+    });
+    const plan = org?.plan || 'FREE';
+    const planConfig = PLAN_CONFIGS[plan];
+
+    const db = scopedClient(activeOrgId);
+    const memberCount = await db.member.count({
+      where: { organizationId: activeOrgId },
+    });
+    const pendingInviteCount = await db.invitation.count({
+      where: { organizationId: activeOrgId, status: 'PENDING' },
+    });
+
+    if (memberCount + pendingInviteCount >= planConfig.maxMembers) {
+      throw new BadRequestException(`Workspace member limit exceeded for this plan (${planConfig.maxMembers}).`);
+    }
+
     return this.orgsService.inviteMember(activeOrgId, req.user.id, dto.email, dto.role);
   }
 

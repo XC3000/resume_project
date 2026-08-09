@@ -1,11 +1,12 @@
-import { Controller, Post, Get, Patch, Req, Res, Body, Param, UseGuards, UnauthorizedException, HttpCode, HttpStatus, Logger, NotFoundException } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Req, Res, Body, Param, UseGuards, UnauthorizedException, HttpCode, HttpStatus, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Request, Response } from 'express';
 import * as crypto from 'crypto';
 import { TriageService } from './triage.service';
 import { AuthGuard } from '../../auth/auth.guard';
 import { OrgGuard } from '../../auth/org.guard';
 import { OrgContext } from '../../auth/org-context';
-import { scopedClient } from '@platform/db';
+import { scopedClient, unsafeUnscopedClient } from '@platform/db';
+import { PLAN_CONFIGS } from '@platform/contracts';
 
 @Controller('triage')
 export class TriageController {
@@ -129,6 +130,23 @@ export class TriageController {
   async createProject(@Body() dto: { name: string; repoFullName: string; githubRepoId?: number }) {
     const orgId = this.orgContext.getOrgId();
     const db = scopedClient(orgId);
+    
+    // Check project creation limits against active plan configuration
+    const org = await unsafeUnscopedClient.organization.findUnique({
+      where: { id: orgId },
+      select: { plan: true },
+    });
+    const plan = org?.plan || 'FREE';
+    const planConfig = PLAN_CONFIGS[plan];
+
+    const projectCount = await db.project.count({
+      where: { organizationId: orgId, archivedAt: null },
+    });
+
+    if (projectCount >= planConfig.maxProjects) {
+      throw new BadRequestException(`Project limit exceeded for this plan (${planConfig.maxProjects}).`);
+    }
+
     const slug = dto.name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
     
     const existing = await db.project.findFirst({

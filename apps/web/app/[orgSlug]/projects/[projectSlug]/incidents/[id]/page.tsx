@@ -154,6 +154,18 @@ export default function IncidentDetailsPage() {
         )}
       </div>
 
+      {incident.status === 'PENDING_QUOTA' && (
+        <div className="p-4.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 leading-relaxed flex items-start gap-3 shrink-0 shadow-lg shadow-amber-500/5">
+          <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold">Daily LLM Token Quota Exhausted</p>
+            <p className="text-slate-450 mt-1">
+              AI log classification and vector search similarity analysis are temporarily paused for this incident because your organization's daily token allocation cap has been reached. Analysis will automatically resume once the daily quota resets at midnight UTC.
+            </p>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 shrink-0">
           <p className="text-sm text-red-300">{error}</p>

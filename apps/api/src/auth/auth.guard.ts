@@ -20,7 +20,12 @@ export class AuthGuard implements CanActivate {
       // In DEMO_MODE, allow unauthenticated requests by attaching mock user credentials
       if (process.env.DEMO_MODE === 'true') {
         request.user = { id: 'demo-user-id', email: 'demo@example.com', name: 'Demo User' };
-        request.session = { id: 'demo-session-id', userId: 'demo-user-id', expiresAt: new Date(Date.now() + 86400000) };
+        request.session = { 
+          id: 'demo-session-id', 
+          userId: 'demo-user-id', 
+          activeOrganizationId: 'demo-org-id',
+          expiresAt: new Date(Date.now() + 86400000) 
+        };
         return true;
       }
       throw new UnauthorizedException('Unauthorized');
