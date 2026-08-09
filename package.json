@@ -2,6 +2,11 @@
   "name": "platform",
   "private": true,
   "packageManager": "pnpm@9.2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XC3000/resume_project.git"
+  },
+  "homepage": "https://github.com/XC3000/resume_project",
   "scripts": {
     "build": "turbo run build",
     "build:api": "turbo run db:generate && turbo run build --filter=@platform/api...",

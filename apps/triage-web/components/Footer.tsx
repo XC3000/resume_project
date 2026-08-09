@@ -63,8 +63,17 @@ export function Footer() {
 
         <div className="pt-8 border-t border-slate-800/60 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500">
           <p>© {new Date().getFullYear()} Triage AI Platform. All rights reserved.</p>
-          <div className="flex items-center space-x-1 mt-4 sm:mt-0">
+          <div className="flex items-center space-x-4 mt-4 sm:mt-0">
             <span>Built with NestJS, Next.js & Supabase</span>
+            <a
+              href="https://github.com/XC3000/resume_project"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center space-x-1 text-slate-400 hover:text-white transition-colors"
+            >
+              <Github className="h-3.5 w-3.5" />
+              <span>GitHub</span>
+            </a>
           </div>
         </div>
       </div>

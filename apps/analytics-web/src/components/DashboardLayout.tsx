@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { authClient } from '@platform/auth';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { BarChart3, Key, LogOut, Menu, X, User, ShieldCheck } from 'lucide-react';
+import { BarChart3, Key, LogOut, Menu, X, User, ShieldCheck, Github } from 'lucide-react';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -77,6 +77,15 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
               </Link>
             );
           })}
+          <a
+            href="https://github.com/XC3000/resume_project"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center space-x-3 px-4 py-3 rounded-xl text-muted-foreground hover:bg-card/50 hover:text-foreground transition"
+          >
+            <Github className="h-5 w-5" />
+            <span>GitHub Repository</span>
+          </a>
         </nav>
 
         {/* User Info footer */}

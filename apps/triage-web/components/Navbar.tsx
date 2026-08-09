@@ -43,7 +43,7 @@ export function Navbar() {
         {/* Action Buttons */}
         <div className="flex items-center space-x-3">
           <a
-            href="https://github.com"
+            href="https://github.com/XC3000/resume_project"
             target="_blank"
             rel="noreferrer"
             className="hidden sm:inline-flex items-center space-x-2 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 hover:text-white hover:bg-slate-800 transition-all text-xs font-medium"

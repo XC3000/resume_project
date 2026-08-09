@@ -7,7 +7,7 @@ export function Hero() {
   const [terminalStep, setTerminalStep] = useState(0);
 
   const logs = [
-    { type: "in", text: "POST /triage/webhooks/github -> Event: issue_comment.created (repo: platform/api)" },
+    { type: "in", text: "POST /triage/webhooks/github -> Event: workflow_run.completed (repo: XC3000/resume_project)" },
     { type: "sys", text: "HMAC Signature verified (timingSafeEqual) [sha256=9f8a...]" },
     { type: "ai", text: "Embedding generated via Gemini AI (halfvec: 768 dims)" },
     { type: "db", text: "pgvector similarity search matching incident #402 (distance: 0.041)" },
