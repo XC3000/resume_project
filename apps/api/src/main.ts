@@ -82,10 +82,8 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       process.env.TRIAGE_WEB_URL || 'http://localhost:3001',
-      process.env.ANALYTICS_WEB_URL || 'http://localhost:3002',
       'http://localhost:3000',
       'http://localhost:3001',
-      'http://localhost:3002',
     ],
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Cookie'],

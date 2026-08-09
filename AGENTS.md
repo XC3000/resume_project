@@ -1,23 +1,19 @@
-# Project: platform
-
-Turborepo monorepo containing two portfolio projects that share one Supabase
+Turborepo monorepo containing the triage portfolio project that shares one Supabase
 Postgres database and one NestJS backend service.
 
 ## Non-negotiable architecture
 
 - pnpm workspaces + Turborepo. Package manager is pnpm. Never npm or yarn.
-- ONE NestJS app at `apps/api`. Both projects' APIs and all background workers
+- ONE NestJS app at `apps/api`. The API and all background workers
   live inside it as Nest modules. Do NOT create a second backend service, a
   separate worker app, or a standalone cron service. The deploy target has a
   750 instance-hour/month budget that only fits one service.
-- TWO Next.js 15 apps (App Router): `apps/triage-web`, `apps/analytics-web`.
+- ONE Next.js 15 app (App Router): `apps/triage-web`.
 - Prisma is the only DB access layer. Schema lives ONLY in `packages/db`.
   No app defines its own schema or instantiates its own PrismaClient.
-- Single Postgres, three schemas: `shared`, `triage`, `analytics`.
-  `triage` and `analytics` tables never reference each other. Only `shared`.
+- Single Postgres, two schemas: `shared`, `triage`.
 - Better Auth for all authentication. No Supabase Auth, no NextAuth, no Clerk.
-- Redis is used for BullMQ (triage) and Redis Streams (analytics). Raw analytics
-  events are NEVER written to Postgres — only aggregated rollups are.
+- Redis is used for BullMQ (triage).
 
 ## Stack versions
 
@@ -27,16 +23,13 @@ Tailwind + shadcn/ui · Zod · BullMQ · ioredis · pgvector (halfvec, 768 dims)
 ## Directory layout
 
 apps/
-api/ NestJS — src/modules/{auth,triage,analytics}/
+api/ NestJS — src/modules/{auth,triage}/
 triage-web/ Next.js
-analytics-web/ Next.js
 packages/
 db/ Prisma schema + exported singleton client
 auth/ Better Auth server instance + typed client
 contracts/ Zod schemas shared between web and api
 ui/ shadcn components
-docker/
-bench/
 
 ## Hard constraints — violating these breaks deployment
 

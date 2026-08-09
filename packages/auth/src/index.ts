@@ -29,10 +29,8 @@ export const auth = betterAuth({
   ],
   trustedOrigins: [
     process.env.TRIAGE_WEB_URL || "http://localhost:3001",
-    process.env.ANALYTICS_WEB_URL || "http://localhost:3002",
     "http://localhost:3000",
     "http://localhost:3001",
-    "http://localhost:3002",
   ].filter((origin): origin is string => !!origin),
 });
 

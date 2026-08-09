@@ -7,7 +7,7 @@ datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
   directUrl  = env("DIRECT_URL")
-  schemas    = ["shared", "triage", "analytics"]
+  schemas    = ["shared", "triage"]
   extensions = [vector]
 }
 
@@ -29,12 +29,7 @@ enum Severity {
   @@schema("triage")
 }
 
-enum MetricGranularity {
-  MINUTE
-  HOUR
 
-  @@schema("analytics")
-}
 
 // ==========================================
 // SHARED SCHEMA (Authentication & Multi-tenant)
@@ -263,51 +258,4 @@ model LlmUsage {
   @@schema("triage")
 }
 
-// ==========================================
-// ANALYTICS SCHEMA (Sources & Metric rollups)
-// ==========================================
 
-model Source {
-  id              String           @id @default(uuid())
-  organizationId  String
-  name            String
-  apiKeyId        String
-  createdAt       DateTime         @default(now())
-  metricRollups   MetricRollup[]
-  processedEvents ProcessedEvent[]
-
-  @@index([organizationId])
-  @@index([apiKeyId])
-  @@index([createdAt])
-  @@schema("analytics")
-}
-
-model MetricRollup {
-  id          String            @id @default(uuid())
-  sourceId    String
-  metricName  String
-  bucketStart DateTime          @db.Timestamptz
-  granularity MetricGranularity
-  count       Int
-  sum         Float
-  min         Float
-  max         Float
-  source      Source            @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-
-  @@unique([sourceId, metricName, bucketStart, granularity])
-  @@index([sourceId, metricName, bucketStart])
-  @@index([bucketStart])
-  @@index([metricName])
-  @@schema("analytics")
-}
-
-model ProcessedEvent {
-  id          String   @id
-  sourceId    String
-  processedAt DateTime @default(now())
-  source      Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-
-  @@index([sourceId])
-  @@index([processedAt])
-  @@schema("analytics")
-}
