@@ -11,29 +11,23 @@ datasource db {
   extensions = [vector]
 }
 
-enum IncidentStatus {
-  OPEN
-  TRIAGED
-  RESOLVED
-  PENDING_QUOTA
+// ==========================================
+// SHARED SCHEMA ENUMS & MODELS (Auth & Org)
+// ==========================================
 
-  @@schema("triage")
+enum OrganizationKind {
+  PERSONAL
+  TEAM
+
+  @@schema("shared")
 }
 
-enum Severity {
-  LOW
-  MEDIUM
-  HIGH
-  CRITICAL
+enum OrganizationPlan {
+  FREE
+  PRO
 
-  @@schema("triage")
+  @@schema("shared")
 }
-
-
-
-// ==========================================
-// SHARED SCHEMA (Authentication & Multi-tenant)
-// ==========================================
 
 model User {
   id            String       @id
@@ -67,7 +61,6 @@ model Session {
 
   @@unique([token])
   @@index([userId])
-  @@index([activeOrganizationId])
   @@map("session")
   @@schema("shared")
 }
@@ -107,16 +100,17 @@ model Verification {
 }
 
 model Organization {
-  id          String       @id
+  id          String           @id
   name        String
-  slug        String
+  slug        String           @unique
   logo        String?
   createdAt   DateTime
   metadata    String?
+  kind        OrganizationKind
+  plan        OrganizationPlan
   members     Member[]
   invitations Invitation[]
 
-  @@unique([slug])
   @@map("organization")
   @@schema("shared")
 }
@@ -150,7 +144,6 @@ model Invitation {
 
   @@index([organizationId])
   @@index([email])
-  @@index([inviterId])
   @@map("invitation")
   @@schema("shared")
 }
@@ -187,61 +180,157 @@ model Apikey {
 }
 
 // ==========================================
-// TRIAGE SCHEMA (Incidents & Failure analysis)
+// TRIAGE SCHEMA ENUMS & MODELS
 // ==========================================
+
+enum IncidentSource {
+  GITHUB_CI
+  GENERIC
+
+  @@schema("triage")
+}
+
+enum IncidentStatus {
+  OPEN
+  ENRICHING
+  TRIAGED
+  RESOLVED
+  PENDING_QUOTA
+
+  @@schema("triage")
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@schema("triage")
+}
+
+model Project {
+  id                  String               @id @default(uuid())
+  organizationId      String
+  name                String
+  slug                String
+  repoFullName        String?
+  githubRepoId        BigInt?
+  webhookSecret       String
+  createdAt           DateTime             @default(now())
+  archivedAt          DateTime?
+  incidents           Incident[]
+  failureSignatures   FailureSignature[]
+  webhookDeliveries   WebhookDelivery[]
+
+  @@unique([organizationId, slug])
+  @@map("project")
+  @@schema("triage")
+}
+
+model GithubInstallation {
+  id                  String    @id @default(uuid())
+  organizationId      String
+  installationId      BigInt    @unique
+  accountLogin        String
+  accountType         String
+  repositorySelection String
+  suspendedAt         DateTime?
+  createdAt           DateTime  @default(now())
+
+  @@map("github_installation")
+  @@schema("triage")
+}
 
 model Incident {
   id                String             @id @default(uuid())
   organizationId    String
-  source            String
+  projectId         String
+  source            IncidentSource
   externalId        String?
   title             String
   status            IncidentStatus     @default(OPEN)
   severity          Severity
   classification    String?
-  suggestedFix      String?
   rootCauseHint     String?
-  createdAt         DateTime           @default(now())
+  suggestedFix      String?
+  detectedAt        DateTime           @default(now())
   resolvedAt        DateTime?
-  logChunks         LogChunk[]
+  createdAt         DateTime           @default(now())
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  contextChunks     ContextChunk[]
   failureSignatures FailureSignature[]
 
-  @@index([organizationId])
-  @@index([status])
-  @@index([severity])
-  @@index([createdAt])
-  @@index([resolvedAt])
-  @@index([source, externalId])
+  @@index([organizationId, projectId, status, detectedAt])
+  @@map("incident")
   @@schema("triage")
 }
 
-model LogChunk {
-  id          String   @id @default(uuid())
-  incidentId  String
-  content     String
-  startOffset Int?
-  endOffset   Int?
-  sequence    Int
-  justifies   Boolean  @default(false)
-  incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+model ContextChunk {
+  id             String   @id @default(uuid())
+  organizationId String
+  incidentId     String
+  content        String
+  startOffset    Int
+  endOffset      Int
+  sequence       Int
+  justifies      Boolean  @default(false)
+  incident       Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
 
   @@index([incidentId])
   @@index([sequence])
+  @@map("context_chunk")
   @@schema("triage")
 }
 
 model FailureSignature {
   id             String                      @id @default(uuid())
   organizationId String
+  projectId      String
   incidentId     String
   normalisedText String
   embedding      Unsupported("halfvec(768)")
   createdAt      DateTime                    @default(now())
   incident       Incident                    @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  project        Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  @@index([incidentId])
-  @@index([organizationId])
-  @@index([createdAt])
+  @@index([organizationId, projectId])
+  @@map("failure_signature")
+  @@schema("triage")
+}
+
+model ApiKey {
+  id              String    @id @default(uuid())
+  organizationId  String
+  name            String
+  prefix          String
+  hash            String
+  scopes          String[]
+  createdByUserId String
+  expiresAt       DateTime?
+  lastUsedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([prefix])
+  @@map("api_key")
+  @@schema("triage")
+}
+
+model WebhookDelivery {
+  id             String    @id @default(uuid())
+  organizationId String
+  projectId      String?
+  source         String
+  eventType      String
+  deliveryId     String    @unique
+  status         String
+  error          String?
+  receivedAt     DateTime  @default(now())
+  project        Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, receivedAt])
+  @@map("webhook_delivery")
   @@schema("triage")
 }
 
@@ -254,8 +343,6 @@ model LlmUsage {
   callCount      Int
 
   @@unique([organizationId, day])
-  @@index([day])
+  @@map("llm_usage")
   @@schema("triage")
 }
-
-

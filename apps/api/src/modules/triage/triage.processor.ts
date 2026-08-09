@@ -94,12 +94,38 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
           id: crypto.randomUUID(),
           name: `${owner} Triage Org`,
           slug: ownerSlug,
+          kind: 'PERSONAL',
+          plan: 'FREE',
           createdAt: new Date(),
         },
       });
       org = newOrg;
     }
     targetOrgId = org.id;
+
+    // Map project based on repository slug
+    const projectSlug = repo.toLowerCase();
+    let project = await prisma.project.findFirst({
+      where: {
+        organizationId: targetOrgId,
+        slug: projectSlug,
+      },
+    });
+
+    if (!project) {
+      this.logger.log(`No project found for slug '${projectSlug}'. Creating a default project.`);
+      project = await prisma.project.create({
+        data: {
+          id: crypto.randomUUID(),
+          organizationId: targetOrgId,
+          name: repo,
+          slug: projectSlug,
+          repoFullName: `${owner}/${repo}`,
+          webhookSecret: crypto.randomBytes(32).toString('hex'),
+          createdAt: new Date(),
+        },
+      });
+    }
 
     // 2. Determine GitHub OAuth Token (check org metadata or fall back to GITHUB_OAUTH_TOKEN env)
     let token = process.env.GITHUB_OAUTH_TOKEN;
@@ -211,18 +237,20 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
         sequence++;
       }
 
-      // 7. Save the Incident and LogChunks inside a single database transaction
-      this.logger.log(`Saving Incident and ${logChunksData.length} LogChunks to the database...`);
+      // 7. Save the Incident and ContextChunks inside a single database transaction
+      this.logger.log(`Saving Incident and ${logChunksData.length} ContextChunks to the database...`);
       const incident = await prisma.incident.create({
         data: {
           organizationId: targetOrgId,
-          source: `github:${owner}/${repo}`,
+          projectId: project.id,
+          source: 'GITHUB_CI',
           externalId: runId.toString(),
           title: `Workflow run failure on ${owner}/${repo} (Run #${runId})`,
           status: 'OPEN',
           severity: 'HIGH',
-          logChunks: {
+          contextChunks: {
             create: logChunksData.map((chunk) => ({
+              organizationId: targetOrgId,
               content: chunk.content,
               startOffset: chunk.startOffset,
               endOffset: chunk.endOffset,
@@ -231,13 +259,13 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
           },
         },
         include: {
-          logChunks: {
+          contextChunks: {
             orderBy: { sequence: 'asc' },
           },
         },
       });
 
-      const dbLogChunks = incident.logChunks;
+      const dbLogChunks = incident.contextChunks;
 
       // 8. Generate stable failure signature and embedding
       const normalisedSignature = normaliseLog(accumulatedContent);
@@ -255,6 +283,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
       await this.triageService.createFailureSignature(
         sigId,
         targetOrgId,
+        project.id,
         incident.id,
         normalisedSignature,
         embedding
@@ -271,7 +300,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
         const histIncident = await prisma.incident.findUnique({
           where: { id: sig.incidentId },
           include: {
-            logChunks: {
+            contextChunks: {
               orderBy: { sequence: 'asc' },
             },
           },
@@ -316,7 +345,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
           severity: i.severity,
           rootCauseHint: i.rootCauseHint,
           suggestedFix: i.suggestedFix,
-          logChunks: i.logChunks.map((c: { content: string }) => ({ content: c.content })),
+          logChunks: i.contextChunks.map((c: { content: string }) => ({ content: c.content })),
         }))
       );
 
@@ -371,7 +400,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
             severity: result.severity,
           },
         }),
-        prisma.logChunk.updateMany({
+        prisma.contextChunk.updateMany({
           where: {
             incidentId: incident.id,
             id: { in: result.justifyingLogChunkIds },

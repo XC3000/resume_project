@@ -45,6 +45,7 @@ export class TriageService implements OnModuleDestroy {
   async createFailureSignature(
     id: string,
     organizationId: string,
+    projectId: string,
     incidentId: string,
     normalisedText: string,
     embedding: number[]
@@ -53,8 +54,8 @@ export class TriageService implements OnModuleDestroy {
     const createdAt = new Date();
 
     await prisma.$executeRaw`
-      INSERT INTO "triage"."FailureSignature" ("id", "organizationId", "incidentId", "normalisedText", "embedding", "createdAt")
-      VALUES (${id}, ${organizationId}, ${incidentId}, ${normalisedText}, ${embeddingString}::halfvec, ${createdAt})
+      INSERT INTO "triage"."failure_signature" ("id", "organizationId", "projectId", "incidentId", "normalisedText", "embedding", "createdAt")
+      VALUES (${id}, ${organizationId}, ${projectId}, ${incidentId}, ${normalisedText}, ${embeddingString}::halfvec, ${createdAt})
     `;
   }
 
@@ -91,7 +92,7 @@ export class TriageService implements OnModuleDestroy {
         "normalisedText", 
         "createdAt",
         (1.0 - ("embedding" <=> ${embeddingString}::halfvec))::double precision AS "similarity"
-      FROM "triage"."FailureSignature"
+      FROM "triage"."failure_signature"
       WHERE "organizationId" = ${organizationId}
       ORDER BY "embedding" <=> ${embeddingString}::halfvec ASC
       LIMIT 5
