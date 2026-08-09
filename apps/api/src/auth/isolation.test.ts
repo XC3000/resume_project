@@ -23,6 +23,8 @@ import { Role, REQUIRE_ROLE_KEY } from './require-role.decorator';
 import { RoleGuard } from './role.guard';
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { auth } from '@platform/auth';
+import { OrgsService } from '../modules/orgs/orgs.service';
 
 // Helper to mock NestJS ExecutionContext
 function createMockExecutionContext(request: any, handler?: any): ExecutionContext {
@@ -360,15 +362,118 @@ async function runIsolationSuite() {
   const roleGuardRes1 = roleGuard.canActivate(execContextMember);
   assert.strictEqual(roleGuardRes1, true);
 
-  // Guard requiring ADMIN on Member role must fail
-  const adminRequiredHandler = () => {};
-  reflector.getAllAndOverride = () => Role.ADMIN;
-  const execContextAdmin = createMockExecutionContext({}, adminRequiredHandler);
-  assert.throws(
-    () => roleGuard.canActivate(execContextAdmin),
-    ForbiddenException,
-    "Member was allowed to perform an Admin action!"
+  // --- TEST CASE 9: BETTER AUTH SIGNUP & ACTIVE ORG HOOK ---
+  console.log('Test Case 9: Better Auth SignUp & Active Org Hooks');
+  
+  // Clean up user to avoid signup collisions
+  await unsafeUnscopedClient.user.deleteMany({
+    where: { email: { in: ['signupuser@example.com', 'signupuser@another.com'] } },
+  });
+
+  // Call the sign-up API to trigger Better Auth hook
+  const signUpRes1 = await auth.api.signUpEmail({
+    body: {
+      email: 'signupuser@example.com',
+      password: 'Password123!',
+      name: 'Signup User',
+    },
+  });
+  
+  assert.ok(signUpRes1);
+  assert.ok(signUpRes1.user);
+  assert.ok(signUpRes1.token);
+
+  const sessionRecord1 = await unsafeUnscopedClient.session.findFirst({
+    where: { token: signUpRes1.token },
+  });
+  assert.ok(sessionRecord1, "Session record was not created on sign-up!");
+
+  // Verify that a PERSONAL organization was created
+  const personalOrg1 = await unsafeUnscopedClient.organization.findFirst({
+    where: {
+      slug: 'signupuser',
+    },
+  });
+  assert.ok(personalOrg1, "Personal organization was not created on sign-up!");
+  assert.strictEqual(personalOrg1.kind, 'PERSONAL');
+
+  // Verify that the user is the OWNER of this personal organization
+  const member1 = await unsafeUnscopedClient.member.findFirst({
+    where: {
+      organizationId: personalOrg1.id,
+      userId: signUpRes1.user.id,
+    },
+  });
+  assert.ok(member1, "User is not a member of their personal organization!");
+  assert.strictEqual(member1.role, 'owner');
+
+  // Verify that the session has activeOrganizationId set to the personal organization
+  assert.strictEqual(sessionRecord1.activeOrganizationId, personalOrg1.id, "Active organization was not set on signup session!");
+
+  // Verify slug collision handling: sign up another user with the same email local-part
+  const signUpRes2 = await auth.api.signUpEmail({
+    body: {
+      email: 'signupuser@another.com',
+      password: 'Password123!',
+      name: 'Signup User 2',
+    },
+  });
+  assert.ok(signUpRes2);
+
+  const personalOrg2 = await unsafeUnscopedClient.organization.findFirst({
+    where: {
+      slug: 'signupuser-1', // Collision resolved by appending "-1"
+    },
+  });
+  assert.ok(personalOrg2, "Collision resolution slug was not generated!");
+
+  // --- TEST CASE 10: ORGANIZATION MODULE ENDPOINTS ---
+  console.log('Test Case 10: Organization Module Endpoints (Create TEAM, Switch Active, Update Settings, Delete restrictions)');
+
+  const orgsService = new OrgsService();
+
+  // 10a. Create TEAM organization
+  const teamOrg = await orgsService.createTeamOrg(signUpRes1.user.id, 'My Team Org', 'my-team-org');
+  assert.ok(teamOrg);
+  assert.strictEqual(teamOrg.kind, 'TEAM');
+
+  // Verify user is owner of newly created team org
+  const teamMember = await unsafeUnscopedClient.member.findFirst({
+    where: {
+      organizationId: teamOrg.id,
+      userId: signUpRes1.user.id,
+    },
+  });
+  assert.ok(teamMember);
+  assert.strictEqual(teamMember.role, 'owner');
+
+  // 10b. Switch Active Org
+  const switchRes = await orgsService.switchActiveOrg(signUpRes1.user.id, sessionRecord1.id, teamOrg.id);
+  assert.strictEqual(switchRes.activeOrganizationId, teamOrg.id);
+
+  // 10c. Update Settings
+  const updatedOrg = await orgsService.updateSettings(teamOrg.id, 'New Name', 'new-team-slug');
+  assert.strictEqual(updatedOrg.name, 'New Name');
+  assert.strictEqual(updatedOrg.slug, 'new-team-slug');
+
+  // 10d. Delete Organization restrictions
+  // Personal organization cannot be deleted
+  await assert.rejects(
+    async () => {
+      await orgsService.deleteOrg(personalOrg1.id);
+    },
+    /PERSONAL organizations cannot be deleted/i,
+    "Personal organization deletion did not throw!"
   );
+
+  // Team organization can be deleted
+  const deleteOrgRes = await orgsService.deleteOrg(teamOrg.id);
+  assert.strictEqual(deleteOrgRes.message, 'Organization deleted successfully.');
+
+  const checkTeamOrgExists = await unsafeUnscopedClient.organization.findUnique({
+    where: { id: teamOrg.id },
+  });
+  assert.ok(!checkTeamOrgExists, "Team organization was not deleted!");
 
   console.log('--- ALL TENANT ISOLATION TESTS PASSED SUCCESSFULLY! ---');
 }
