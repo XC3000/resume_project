@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, OnModuleDestroy, Logger, forwardRef } from '@nestjs/common';
 import { Worker, Job } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CONNECTION } from './redis.provider';
@@ -14,6 +14,7 @@ import * as crypto from 'crypto';
 import { normaliseLog } from './normaliser';
 import { IEmbeddingService } from './embedding.service';
 import { ClassifierService } from './classifier.service';
+import { GithubService } from '../github/github.service';
 
 @Injectable()
 export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
@@ -25,6 +26,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
     private readonly triageService: TriageService,
     @Inject('IEmbeddingService') private readonly embeddingService: IEmbeddingService,
     private readonly classifierService: ClassifierService,
+    @Inject(forwardRef(() => GithubService)) private readonly githubService: GithubService,
   ) {}
 
   onModuleInit() {
@@ -155,18 +157,17 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
       throw new Error(`Project ${projectId || 'unknown'} not found under organization ${targetOrgId}`);
     }
 
-    // 2. Determine GitHub OAuth Token (check org metadata or fall back to GITHUB_OAUTH_TOKEN env)
+    // 2. Fetch workflow logs using the ORG's installation token, not a user token
     let token = process.env.GITHUB_OAUTH_TOKEN;
-    if (org.metadata) {
-      try {
-        const parsedMeta = JSON.parse(org.metadata);
-        if (parsedMeta.githubToken) {
-          token = parsedMeta.githubToken;
-          this.logger.log('Using organization OAuth token from metadata');
-        }
-      } catch (e) {
-        this.logger.warn('Failed to parse organization metadata JSON');
-      }
+    const githubInstallation = await systemDb.githubInstallation.findFirst({
+      where: { organizationId: targetOrgId },
+    });
+
+    if (githubInstallation) {
+      this.logger.log(`Fetching installation token for organization ${targetOrgId} (Installation: ${githubInstallation.installationId})`);
+      token = await this.githubService.getInstallationToken(githubInstallation.installationId.toString());
+    } else {
+      this.logger.log('No GitHub App installation found. Falling back to GITHUB_OAUTH_TOKEN.');
     }
 
     // 3. Download the workflow run logs ZIP archive via GitHub API
@@ -238,7 +239,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
       }
 
       // 6. Split logs into LogChunk rows with accurate byte offsets (e.g. 100 KB chunks)
-      const CHUNK_SIZE = 100 * 1024; // 100 KB chunks
+      const CHUNK_SIZE_CHARS = 100 * 1024; // Slice 100K characters at a time
       const logChunksData: {
         content: string;
         startOffset: number;
@@ -246,13 +247,15 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
         sequence: number;
       }[] = [];
 
-      let startOffset = 0;
+      let currentByteOffset = 0;
+      let charOffset = 0;
       let sequence = 0;
 
-      while (startOffset < accumulatedContent.length) {
-        const contentChunk = accumulatedContent.slice(startOffset, startOffset + CHUNK_SIZE);
+      while (charOffset < accumulatedContent.length) {
+        const contentChunk = accumulatedContent.slice(charOffset, charOffset + CHUNK_SIZE_CHARS);
         const chunkBytes = Buffer.byteLength(contentChunk, 'utf8');
-        const endOffset = startOffset + chunkBytes;
+        const startOffset = currentByteOffset;
+        const endOffset = currentByteOffset + chunkBytes;
 
         logChunksData.push({
           content: contentChunk,
@@ -261,7 +264,8 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
           sequence,
         });
 
-        startOffset = endOffset;
+        currentByteOffset = endOffset;
+        charOffset += contentChunk.length;
         sequence++;
       }
 
@@ -319,7 +323,7 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
 
       // 9. Similarity Search: Fetch top 5 similar historical incidents
       this.logger.log('Executing similarity search for historical incidents...');
-      const similarSignatures = await this.triageService.findSimilarFailureSignatures(targetOrgId, embedding);
+      const similarSignatures = await this.triageService.findSimilarFailureSignatures(targetOrgId, project.id, embedding);
       
       const similarIncidents = [];
       for (const sig of similarSignatures) {

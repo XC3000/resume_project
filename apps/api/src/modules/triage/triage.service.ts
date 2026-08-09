@@ -67,6 +67,7 @@ export class TriageService implements OnModuleDestroy {
    */
   async findSimilarFailureSignatures(
     organizationId: string,
+    projectId: string,
     embedding: number[]
   ): Promise<Array<{
     id: string;
@@ -95,7 +96,7 @@ export class TriageService implements OnModuleDestroy {
         "createdAt",
         (1.0 - ("embedding" <=> ${embeddingString}::halfvec))::double precision AS "similarity"
       FROM "triage"."failure_signature"
-      WHERE "organizationId" = ${organizationId}
+      WHERE "organizationId" = ${organizationId} AND "projectId" = ${projectId}
       ORDER BY "embedding" <=> ${embeddingString}::halfvec ASC
       LIMIT 5
     `;

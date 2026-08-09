@@ -48,6 +48,7 @@ async function runIsolationSuite() {
 
   // 1. Database Clean up
   console.log('Cleaning up database tables...');
+  await unsafeUnscopedClient.webhookDelivery.deleteMany({});
   await unsafeUnscopedClient.githubInstallation.deleteMany({});
   await unsafeUnscopedClient.failureSignature.deleteMany({});
   await unsafeUnscopedClient.contextChunk.deleteMany({});
@@ -290,7 +291,7 @@ async function runIsolationSuite() {
 
   // Running vector search using Org A context must never return Org B's signatures
   // even if B's vector matches the search query perfectly
-  const searchResults = await triageService.findSimilarFailureSignatures(orgA.id, embeddingB);
+  const searchResults = await triageService.findSimilarFailureSignatures(orgA.id, projA.id, embeddingB);
   
   // Verify that B's signature is NOT in the search results
   const hasOrgBSignature = searchResults.some(res => res.id === 'sig-b-id');
