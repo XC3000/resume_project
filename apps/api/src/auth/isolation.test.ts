@@ -974,6 +974,222 @@ async function runIsolationSuite() {
     "Rate limiting did not throw 429 HttpException!"
   );
 
+  // --- TEST CASE 19: ORG MEMBER & ROLE RULES ---
+  console.log('Test Case 19: Org Member & Role Rules');
+
+  // Setup a TEAM organization for testing
+  const orgTeam = await unsafeUnscopedClient.organization.create({
+    data: {
+      id: 'org-team-id',
+      name: 'Team Org',
+      slug: 'org-team',
+      kind: 'TEAM',
+      plan: 'FREE',
+      createdAt: new Date(),
+    },
+  });
+
+  // Seed two members: User A as owner, User B as member
+  const memberOwner = await unsafeUnscopedClient.member.create({
+    data: {
+      id: 'member-owner-team-id',
+      organizationId: orgTeam.id,
+      userId: userA.id,
+      role: 'owner',
+      createdAt: new Date(),
+    },
+  });
+
+  const memberB = await unsafeUnscopedClient.member.create({
+    data: {
+      id: 'member-b-team-id',
+      organizationId: orgTeam.id,
+      userId: userB.id,
+      role: 'member',
+      createdAt: new Date(),
+    },
+  });
+
+  // 19a. PERSONAL org cannot be left or deleted
+  await assert.rejects(
+    async () => {
+      await orgsService.leaveOrg(orgA.id, userA.id);
+    },
+    /PERSONAL organizations cannot be left/i,
+    "Left PERSONAL org did not throw!"
+  );
+
+  // 19b. Admin cannot promote to OWNER; only OWNER can
+  // Create a mock user for the admin membership first to satisfy foreign key constraints
+  const userAdminMock = await unsafeUnscopedClient.user.create({
+    data: {
+      id: 'user-admin-mock-id',
+      email: 'admin-mock@example.com',
+      name: 'Admin Mock User',
+    },
+  });
+
+  const memberAdmin = await unsafeUnscopedClient.member.create({
+    data: {
+      id: 'member-admin-team-id',
+      organizationId: orgTeam.id,
+      userId: userAdminMock.id,
+      role: 'admin',
+      createdAt: new Date(),
+    },
+  });
+
+  await assert.rejects(
+    async () => {
+      await orgsService.updateMemberRole(orgTeam.id, 'admin', memberB.id, 'owner');
+    },
+    /An ADMIN cannot promote to OWNER/i,
+    "Admin promoting to OWNER did not throw!"
+  );
+
+  // OWNER can promote
+  const updatedToOwner = await orgsService.updateMemberRole(orgTeam.id, 'owner', memberB.id, 'owner');
+  assert.strictEqual(updatedToOwner.role, 'owner');
+
+  // Revert memberB role back to member
+  await unsafeUnscopedClient.member.update({
+    where: { id: memberB.id },
+    data: { role: 'member' },
+  });
+
+  // 19c. Block removing the last OWNER, and block the last OWNER leaving
+  await assert.rejects(
+    async () => {
+      await orgsService.removeMember(orgTeam.id, 'owner', memberOwner.id);
+    },
+    /Cannot remove the last OWNER/i,
+    "Removing the last owner did not throw!"
+  );
+
+  await assert.rejects(
+    async () => {
+      await orgsService.leaveOrg(orgTeam.id, userA.id);
+    },
+    /Cannot leave the organization as the last OWNER/i,
+    "Last OWNER leaving did not throw!"
+  );
+
+  // 19d. Ownership transfer, OWNER only, with confirmation
+  // Transfer request without confirmation
+  const transferPrompt = await orgsService.transferOwnership(orgTeam.id, userA.id, memberB.id, false) as any;
+  assert.ok(transferPrompt.confirmationRequired);
+
+  // Perform transfer with confirmation
+  const transferSuccess = await orgsService.transferOwnership(orgTeam.id, userA.id, memberB.id, true);
+  assert.strictEqual(transferSuccess.message, 'Ownership transferred successfully.');
+
+  // Verify roles have switched: User B is now owner, User A is demoted to admin
+  const newOwnerRec = await unsafeUnscopedClient.member.findUnique({ where: { id: memberB.id } });
+  const newAdminRec = await unsafeUnscopedClient.member.findUnique({ where: { id: memberOwner.id } });
+  assert.strictEqual(newOwnerRec?.role, 'owner');
+  assert.strictEqual(newAdminRec?.role, 'admin');
+
+  // Clean up orgTeam members and org
+  await unsafeUnscopedClient.member.deleteMany({ where: { organizationId: orgTeam.id } });
+  await unsafeUnscopedClient.organization.delete({ where: { id: orgTeam.id } });
+
+
+  // --- TEST CASE 20: EMAIL INVITATIONS VERIFICATION ---
+  console.log('Test Case 20: Email Invitations Verification');
+
+  // Create a new TEAM org for invitations test
+  const orgTeam2 = await unsafeUnscopedClient.organization.create({
+    data: {
+      id: 'org-team2-id',
+      name: 'Team Org 2',
+      slug: 'org-team2',
+      kind: 'TEAM',
+      plan: 'FREE',
+      createdAt: new Date(),
+    },
+  });
+
+  const memberOwner2 = await unsafeUnscopedClient.member.create({
+    data: {
+      id: 'member-owner2-id',
+      organizationId: orgTeam2.id,
+      userId: userA.id,
+      role: 'owner',
+      createdAt: new Date(),
+    },
+  });
+
+  // 20a. Create invitation & verify token hashed in DB
+  const inviteRes = await orgsService.inviteMember(orgTeam2.id, userA.id, 'invitee@example.com', 'member');
+  assert.ok(inviteRes);
+  assert.strictEqual(inviteRes.email, 'invitee@example.com');
+  
+  // Find stored invitation
+  const inviteInDb = await unsafeUnscopedClient.invitation.findUnique({
+    where: { id: inviteRes.id },
+  });
+  assert.ok(inviteInDb);
+  assert.ok(inviteInDb.tokenHash);
+  assert.strictEqual(inviteInDb.status, 'pending');
+
+  // Create another invitation
+  const invite2 = await orgsService.inviteMember(orgTeam2.id, userA.id, 'invitee2@example.com', 'member');
+  assert.ok(invite2.token);
+
+  // 20b. Expired invitation rejected
+  // Update invitation to be expired
+  await unsafeUnscopedClient.invitation.update({
+    where: { id: invite2.id },
+    data: { expiresAt: new Date(Date.now() - 1000) },
+  });
+
+  await assert.rejects(
+    async () => {
+      await orgsService.acceptInvitation(userB.id, 'invitee2@example.com', invite2.token, false);
+    },
+    /This invitation has expired/i,
+    "Expired invitation did not throw!"
+  );
+
+  // 20c. Accepting requires email to match or explicit confirmation step
+  const invite3 = await orgsService.inviteMember(orgTeam2.id, userA.id, 'invitee3@example.com', 'member');
+  
+  // Try accepting with email mismatch and confirm = false
+  await assert.rejects(
+    async () => {
+      await orgsService.acceptInvitation(userB.id, 'different@example.com', invite3.token, false);
+    },
+    /Email mismatch/i,
+    "Email mismatch without confirm did not throw!"
+  );
+
+  // Accept with confirm = true should succeed
+  const acceptResConfirm = await orgsService.acceptInvitation(userB.id, 'different@example.com', invite3.token, true);
+  assert.strictEqual(acceptResConfirm.organizationId, orgTeam2.id);
+
+  // 20d. Token single-use
+  await assert.rejects(
+    async () => {
+      await orgsService.acceptInvitation(userB.id, 'different@example.com', invite3.token, true);
+    },
+    /Invalid or expired invitation token/i,
+    "Re-using invitation token did not throw!"
+  );
+
+  // 20e. Cross-org / invalid token rejection
+  await assert.rejects(
+    async () => {
+      await orgsService.acceptInvitation(userB.id, 'some@example.com', 'invalidrandomtoken', true);
+    },
+    /Invalid or expired invitation token/i,
+    "Invalid token accepted!"
+  );
+
+  // Clean up orgTeam2
+  await unsafeUnscopedClient.member.deleteMany({ where: { organizationId: orgTeam2.id } });
+  await unsafeUnscopedClient.invitation.deleteMany({ where: { organizationId: orgTeam2.id } });
+  await unsafeUnscopedClient.organization.delete({ where: { id: orgTeam2.id } });
+
   console.log('--- ALL TENANT ISOLATION TESTS PASSED SUCCESSFULLY! ---');
 }
 

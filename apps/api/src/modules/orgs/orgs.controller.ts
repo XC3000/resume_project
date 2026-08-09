@@ -5,7 +5,7 @@ import { RoleGuard } from '../../auth/role.guard';
 import { RequireRole, Role } from '../../auth/require-role.decorator';
 import { OrgContext } from '../../auth/org-context';
 import { OrgsService } from './orgs.service';
-import { CreateOrgDto, UpdateOrgSettingsDto, CreateApiKeyDto } from './orgs.dto';
+import { CreateOrgDto, UpdateOrgSettingsDto, CreateApiKeyDto, InviteMemberDto, AcceptInviteDto, TransferOwnershipDto } from './orgs.dto';
 
 @Controller('orgs')
 export class OrgsController {
@@ -64,5 +64,75 @@ export class OrgsController {
   async revokeApiKey(@Param('id') id: string) {
     const activeOrgId = this.orgContext.getOrgId();
     return this.orgsService.revokeApiKey(activeOrgId, id);
+  }
+
+  @Post('invitations')
+  @UseGuards(AuthGuard, OrgGuard, RoleGuard)
+  @RequireRole(Role.ADMIN)
+  async inviteMember(@Req() req: any, @Body() dto: InviteMemberDto) {
+    const activeOrgId = this.orgContext.getOrgId();
+    return this.orgsService.inviteMember(activeOrgId, req.user.id, dto.email, dto.role);
+  }
+
+  @Get('invitations')
+  @UseGuards(AuthGuard, OrgGuard, RoleGuard)
+  @RequireRole(Role.ADMIN)
+  async listInvitations() {
+    const activeOrgId = this.orgContext.getOrgId();
+    return this.orgsService.listInvitations(activeOrgId);
+  }
+
+  @Post('invitations/:id/revoke')
+  @UseGuards(AuthGuard, OrgGuard, RoleGuard)
+  @RequireRole(Role.ADMIN)
+  async revokeInvitation(@Param('id') id: string) {
+    const activeOrgId = this.orgContext.getOrgId();
+    return this.orgsService.revokeInvitation(activeOrgId, id);
+  }
+
+  @Post('invitations/accept')
+  @UseGuards(AuthGuard)
+  async acceptInvitation(@Req() req: any, @Body() dto: AcceptInviteDto) {
+    return this.orgsService.acceptInvitation(req.user.id, req.user.email, dto.token, dto.confirm);
+  }
+
+  @Get('members')
+  @UseGuards(AuthGuard, OrgGuard)
+  async listMembers() {
+    const activeOrgId = this.orgContext.getOrgId();
+    return this.orgsService.listMembers(activeOrgId);
+  }
+
+  @Patch('members/:memberId')
+  @UseGuards(AuthGuard, OrgGuard, RoleGuard)
+  @RequireRole(Role.ADMIN)
+  async updateMemberRole(@Param('memberId') memberId: string, @Body('role') role: string) {
+    const activeOrgId = this.orgContext.getOrgId();
+    const callerRole = this.orgContext.getRole();
+    return this.orgsService.updateMemberRole(activeOrgId, callerRole, memberId, role);
+  }
+
+  @Delete('members/:memberId')
+  @UseGuards(AuthGuard, OrgGuard, RoleGuard)
+  @RequireRole(Role.ADMIN)
+  async removeMember(@Param('memberId') memberId: string) {
+    const activeOrgId = this.orgContext.getOrgId();
+    const callerRole = this.orgContext.getRole();
+    return this.orgsService.removeMember(activeOrgId, callerRole, memberId);
+  }
+
+  @Post('leave')
+  @UseGuards(AuthGuard, OrgGuard)
+  async leaveOrg(@Req() req: any) {
+    const activeOrgId = this.orgContext.getOrgId();
+    return this.orgsService.leaveOrg(activeOrgId, req.user.id);
+  }
+
+  @Post('transfer-ownership')
+  @UseGuards(AuthGuard, OrgGuard, RoleGuard)
+  @RequireRole(Role.OWNER)
+  async transferOwnership(@Req() req: any, @Body() dto: TransferOwnershipDto) {
+    const activeOrgId = this.orgContext.getOrgId();
+    return this.orgsService.transferOwnership(activeOrgId, req.user.id, dto.targetMemberId, dto.confirm);
   }
 }

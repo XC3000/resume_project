@@ -141,6 +141,7 @@ model Invitation {
   createdAt      DateTime     @default(now())
   inviterId      String
   user           User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+  tokenHash      String?      @unique
 
   @@index([organizationId])
   @@index([email])

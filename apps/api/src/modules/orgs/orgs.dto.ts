@@ -13,3 +13,18 @@ export class CreateApiKeyDto {
   scopes!: string[];
   expiresAt?: string;
 }
+
+export class InviteMemberDto {
+  email!: string;
+  role!: string;
+}
+
+export class AcceptInviteDto {
+  token!: string;
+  confirm?: boolean;
+}
+
+export class TransferOwnershipDto {
+  targetMemberId!: string;
+  confirm?: boolean;
+}
