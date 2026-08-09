@@ -91,6 +91,24 @@ export class TriageController {
     return res.status(HttpStatus.OK).json({ processed: false, reason: 'Event is not a workflow run failure' });
   }
 
+  @Get('incidents')
+  @UseGuards(AuthGuard, OrgGuard)
+  async listAllIncidents() {
+    const orgId = this.orgContext.getOrgId();
+    const db = scopedClient(orgId);
+    const incidents = await db.incident.findMany({
+      orderBy: { detectedAt: 'desc' },
+      include: { project: true },
+    });
+    return incidents.map((i) => ({
+      ...i,
+      project: i.project ? {
+        ...i.project,
+        githubRepoId: i.project.githubRepoId ? Number(i.project.githubRepoId) : null,
+      } : null,
+    }));
+  }
+
   @Get('projects')
   @UseGuards(AuthGuard, OrgGuard)
   async listProjects() {
@@ -237,5 +255,62 @@ export class TriageController {
         suggestedFix: dto.suggestedFix !== undefined ? dto.suggestedFix : incident.suggestedFix,
       },
     });
+  }
+
+  @Get('incidents/:id/similar')
+  @UseGuards(AuthGuard, OrgGuard)
+  async getSimilarIncidents(@Param('id') id: string) {
+    const orgId = this.orgContext.getOrgId();
+    const db = scopedClient(orgId);
+    
+    const incident = await db.incident.findUnique({
+      where: { id },
+      include: { failureSignatures: true },
+    });
+    
+    if (!incident || incident.organizationId !== orgId) {
+      throw new NotFoundException('Incident not found');
+    }
+    
+    const sig = incident.failureSignatures[0];
+    if (!sig) {
+      return [];
+    }
+    
+    const sigWithEmbedding = await db.$queryRaw<Array<{ embedding: string }>>`
+      SELECT "embedding"::text FROM "triage"."failure_signature" WHERE "id" = ${sig.id}
+    `;
+    
+    const embStr = sigWithEmbedding[0]?.embedding;
+    if (!embStr) {
+      return [];
+    }
+    
+    const embedding = embStr.replace(/[\[\]]/g, '').split(',').map(Number);
+    const similarSigs = await this.triageService.findSimilarFailureSignatures(orgId, incident.projectId, embedding);
+    
+    const otherIncidentIds = similarSigs
+      .filter((s) => s.incidentId !== id)
+      .map((s) => s.incidentId);
+      
+    if (otherIncidentIds.length === 0) {
+      return [];
+    }
+    
+    const otherIncidents = await db.incident.findMany({
+      where: { id: { in: otherIncidentIds } },
+    });
+    
+    return similarSigs
+      .filter((s) => s.incidentId !== id)
+      .map((s) => {
+        const inc = otherIncidents.find((i) => i.id === s.incidentId);
+        if (!inc) return null;
+        return {
+          ...inc,
+          similarity: s.similarity,
+        };
+      })
+      .filter(Boolean);
   }
 }

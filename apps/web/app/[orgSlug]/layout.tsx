@@ -5,7 +5,7 @@ import { useParams, useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { authClient } from '@platform/auth';
 import { ScopeSwitcher } from '@/components/ScopeSwitcher';
-import { LayoutDashboard, FolderKanban, Settings, LogOut, Loader2, Shield, User } from 'lucide-react';
+import { LayoutDashboard, FolderKanban, Settings, LogOut, Loader2, Shield, User, ShieldAlert } from 'lucide-react';
 
 export default function ScopeLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -38,11 +38,16 @@ export default function ScopeLayout({ children }: { children: React.ReactNode })
       active: pathname === `/${orgSlug}`,
     },
     {
+      label: 'Incidents',
+      icon: ShieldAlert,
+      href: `/${orgSlug}/incidents`,
+      active: pathname === `/${orgSlug}/incidents` || (pathname.includes('/projects/') && pathname.includes('/incidents')),
+    },
+    {
       label: 'Projects',
       icon: FolderKanban,
       href: `/${orgSlug}/projects`,
-      // Active for projects or project inner pages like incidents
-      active: pathname.startsWith(`/${orgSlug}/projects`),
+      active: pathname === `/${orgSlug}/projects` || (pathname.startsWith(`/${orgSlug}/projects`) && !pathname.includes('/incidents')),
     },
     {
       label: 'Settings',

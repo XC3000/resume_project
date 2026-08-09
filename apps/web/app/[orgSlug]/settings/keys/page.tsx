@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { SettingsTabs } from '@/components/SettingsTabs';
+import { authClient } from '@platform/auth';
 import { Key, Plus, Eye, Trash2, Calendar, Clipboard, CheckCircle, AlertTriangle, AlertCircle, Shield, Loader2 } from 'lucide-react';
 
 export default function ApiKeysSettingsPage() {
@@ -11,6 +12,8 @@ export default function ApiKeysSettingsPage() {
 
   const [loading, setLoading] = useState(true);
   const [keys, setKeys] = useState<any[]>([]);
+  const [session, setSession] = useState<any>(null);
+  const [members, setMembers] = useState<any[]>([]);
   
   // Create Key states
   const [keyName, setKeyName] = useState('');
@@ -22,16 +25,23 @@ export default function ApiKeysSettingsPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  const { data: sessionData } = authClient.useSession();
+
   useEffect(() => {
+    setSession(sessionData);
     loadApiKeys();
-  }, [orgSlug]);
+  }, [orgSlug, sessionData]);
 
   const loadApiKeys = async () => {
     setLoading(true);
     setError('');
     try {
-      const list = await api.get('/orgs/keys');
+      const [list, memberList] = await Promise.all([
+        api.get('/orgs/keys'),
+        api.get('/orgs/members').catch(() => []),
+      ]);
       setKeys(list || []);
+      setMembers(memberList || []);
     } catch (err: any) {
       setError(err.message || 'Failed to load API keys.');
     } finally {
@@ -110,6 +120,10 @@ export default function ApiKeysSettingsPage() {
     );
   }
 
+  const currentUserMember = members.find((m) => m.userId === session?.user?.id);
+  const userRole = currentUserMember?.role;
+  const isAdmin = userRole === 'admin' || userRole === 'owner';
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div>
@@ -142,7 +156,7 @@ export default function ApiKeysSettingsPage() {
             <div>
               <h3 className="text-sm font-bold text-indigo-300">Copy Your API Key</h3>
               <p className="text-xs text-slate-400 mt-1 leading-normal">
-                For security reasons, this key will only be shown to you once. If you lose it, you will need to revoke it and generate a new one.
+                For security reasons, this key will only be shown to you once. You will not see this again.
               </p>
             </div>
           </div>
@@ -162,7 +176,15 @@ export default function ApiKeysSettingsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
         {/* Create API Key Form */}
-        <div className="md:col-span-1 p-6 rounded-2xl bg-slate-900/40 border border-slate-800/80 shadow-2xl backdrop-blur-xl">
+        <div className="md:col-span-1 p-6 rounded-2xl bg-slate-900/40 border border-slate-800/80 shadow-2xl backdrop-blur-xl relative overflow-hidden">
+          {!isAdmin && (
+            <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-xs z-10 flex flex-col items-center justify-center p-6 text-center">
+              <Shield className="w-8 h-8 text-slate-500 mb-2" />
+              <p className="text-xs font-bold text-slate-350">Admin-Only Privilege</p>
+              <p className="text-[10px] text-slate-500 mt-1">Contact your organization administrators to provision API keys.</p>
+            </div>
+          )}
+
           <h3 className="text-sm font-bold text-slate-100 mb-4 flex items-center gap-2">
             <Plus className="w-4.5 h-4.5 text-indigo-400" />
             Generate API Key
@@ -176,10 +198,11 @@ export default function ApiKeysSettingsPage() {
               <input
                 type="text"
                 required
+                disabled={!isAdmin}
                 placeholder="e.g. Jenkins CI Runner"
                 value={keyName}
                 onChange={(e) => setKeyName(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-900 focus:border-indigo-500 outline-none text-slate-200 text-xs transition"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-900 focus:border-indigo-500 outline-none text-slate-200 text-xs transition disabled:opacity-50"
               />
             </div>
 
@@ -189,8 +212,9 @@ export default function ApiKeysSettingsPage() {
               </label>
               <select
                 value={expiresDays}
+                disabled={!isAdmin}
                 onChange={(e) => setExpiresDays(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-900 focus:border-indigo-500 outline-none text-slate-200 text-xs transition"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-900 focus:border-indigo-500 outline-none text-slate-200 text-xs transition disabled:opacity-50"
               >
                 <option value="7">7 Days</option>
                 <option value="30">30 Days</option>
@@ -209,9 +233,10 @@ export default function ApiKeysSettingsPage() {
                   <label key={scope.value} className="flex items-start gap-2.5 text-[11px] text-slate-400 cursor-pointer select-none">
                     <input
                       type="checkbox"
+                      disabled={!isAdmin}
                       checked={scopes.includes(scope.value)}
                       onChange={() => toggleScope(scope.value)}
-                      className="rounded bg-slate-950 border-slate-900 text-indigo-500 focus:ring-indigo-550 focus:ring-offset-slate-900 shrink-0 mt-0.5"
+                      className="rounded bg-slate-950 border-slate-900 text-indigo-500 focus:ring-indigo-550 focus:ring-offset-slate-900 shrink-0 mt-0.5 disabled:opacity-50"
                     />
                     <span>{scope.label}</span>
                   </label>
@@ -221,7 +246,7 @@ export default function ApiKeysSettingsPage() {
 
             <button
               type="submit"
-              disabled={createLoading || !keyName || scopes.length === 0}
+              disabled={!isAdmin || createLoading || !keyName || scopes.length === 0}
               className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-701 text-white font-semibold transition text-xs disabled:opacity-50"
             >
               {createLoading ? 'Generating Key...' : 'Create API Key'}
@@ -264,8 +289,9 @@ export default function ApiKeysSettingsPage() {
 
                   <button
                     onClick={() => handleRevoke(k.id)}
-                    className="p-2 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-850 text-slate-400 hover:text-red-400 transition"
-                    title="Revoke API Key"
+                    disabled={!isAdmin}
+                    className="p-2 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-850 text-slate-400 hover:text-red-400 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={isAdmin ? "Revoke API Key" : "Admin Only"}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>

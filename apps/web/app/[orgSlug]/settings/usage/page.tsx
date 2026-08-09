@@ -44,6 +44,9 @@ export default function UsageSettingsPage() {
     );
   }
 
+  const todayUsage = usage[0] || { callCount: 0, tokensIn: 0, tokensOut: 0 };
+  const percentCalls = Math.min(100, Math.round((todayUsage.callCount / 100) * 100));
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div>
@@ -61,30 +64,49 @@ export default function UsageSettingsPage() {
         </div>
       )}
 
+      {/* Daily cap progress metric */}
+      <div className="p-6 rounded-2xl bg-slate-900/40 border border-slate-800/80 shadow-2xl backdrop-blur-xl max-w-3xl space-y-4">
+        <div className="flex justify-between items-center text-sm font-semibold">
+          <span className="text-slate-350">Today's Query Consumption:</span>
+          <span className="text-indigo-400 font-bold font-mono">
+            {todayUsage.callCount} / 100 queries
+          </span>
+        </div>
+        <div className="w-full bg-slate-950 rounded-full h-3 border border-slate-900 overflow-hidden">
+          <div
+            style={{ width: `${percentCalls}%` }}
+            className="bg-gradient-to-r from-indigo-500 to-purple-650 h-full rounded-full transition-all duration-500"
+          />
+        </div>
+        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+          Quota reset occurs daily at midnight UTC.
+        </p>
+      </div>
+
       {/* Usage summary widgets */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="p-6 rounded-2xl bg-slate-900/40 border border-slate-800/80 shadow-md backdrop-blur-md">
           <div className="flex items-center gap-2 text-slate-500">
             <Sparkles className="w-4.5 h-4.5 text-indigo-400" />
-            <span className="text-xs uppercase tracking-wider font-semibold">Gemini Queries</span>
+            <span className="text-xs uppercase tracking-wider font-semibold font-semibold">Daily Queries</span>
           </div>
-          <p className="text-3xl font-bold mt-2 text-slate-200">{totalCalls}</p>
+          <p className="text-3xl font-bold mt-2 text-slate-200">{todayUsage.callCount}</p>
         </div>
         
         <div className="p-6 rounded-2xl bg-slate-900/40 border border-slate-800/80 shadow-md backdrop-blur-md">
           <div className="flex items-center gap-2 text-slate-500">
             <Cpu className="w-4.5 h-4.5 text-purple-400" />
-            <span className="text-xs uppercase tracking-wider font-semibold">Tokens In</span>
+            <span className="text-xs uppercase tracking-wider font-semibold font-semibold">Tokens In</span>
           </div>
-          <p className="text-3xl font-bold mt-2 text-slate-200">{totalTokensIn.toLocaleString()}</p>
+          <p className="text-3xl font-bold mt-2 text-slate-200">{todayUsage.tokensIn.toLocaleString()}</p>
         </div>
 
         <div className="p-6 rounded-2xl bg-slate-900/40 border border-slate-800/80 shadow-md backdrop-blur-md">
           <div className="flex items-center gap-2 text-slate-500">
             <Cpu className="w-4.5 h-4.5 text-pink-400" />
-            <span className="text-xs uppercase tracking-wider font-semibold">Tokens Out</span>
+            <span className="text-xs uppercase tracking-wider font-semibold font-semibold">Tokens Out</span>
           </div>
-          <p className="text-3xl font-bold mt-2 text-slate-200">{totalTokensOut.toLocaleString()}</p>
+          <p className="text-3xl font-bold mt-2 text-slate-200">{todayUsage.tokensOut.toLocaleString()}</p>
         </div>
       </div>
 

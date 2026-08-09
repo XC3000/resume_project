@@ -147,4 +147,30 @@ export class OrgsController {
       take: 30,
     });
   }
+
+  @Get('integrations')
+  @UseGuards(AuthGuard, OrgGuard)
+  async getIntegrationsDetails() {
+    const activeOrgId = this.orgContext.getOrgId();
+    const db = scopedClient(activeOrgId);
+    
+    const projects = await db.project.findMany({
+      where: { archivedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    
+    const deliveries = await db.webhookDelivery.findMany({
+      where: { organizationId: activeOrgId },
+      orderBy: { receivedAt: 'desc' },
+      take: 10,
+    });
+    
+    return {
+      projects: projects.map((p) => ({
+        ...p,
+        githubRepoId: p.githubRepoId ? Number(p.githubRepoId) : null,
+      })),
+      deliveries,
+    };
+  }
 }

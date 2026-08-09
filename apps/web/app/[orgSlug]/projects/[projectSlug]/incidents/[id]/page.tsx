@@ -16,6 +16,8 @@ export default function IncidentDetailsPage() {
 
   const [loading, setLoading] = useState(true);
   const [incident, setIncident] = useState<any | null>(null);
+  const [similarIncidents, setSimilarIncidents] = useState<any[]>([]);
+  const [highlightedChunkId, setHighlightedChunkId] = useState<string | null>(null);
   
   // Triage state mutation inputs
   const [rootCause, setRootCause] = useState('');
@@ -33,8 +35,12 @@ export default function IncidentDetailsPage() {
     setLoading(true);
     setError('');
     try {
-      const data = await api.get(`/triage/incidents/${id}`);
+      const [data, similar] = await Promise.all([
+        api.get(`/triage/incidents/${id}`),
+        api.get(`/triage/incidents/${id}/similar`).catch(() => []),
+      ]);
       setIncident(data);
+      setSimilarIncidents(similar || []);
       setRootCause(data.rootCauseHint || '');
       setSuggestedFix(data.suggestedFix || '');
     } catch (err: any) {
@@ -76,6 +82,20 @@ export default function IncidentDetailsPage() {
     }
   };
 
+  const handleJumpToEvidence = () => {
+    const evidenceChunk = incident.contextChunks?.find((c: any) => c.justifies);
+    if (evidenceChunk) {
+      setHighlightedChunkId(evidenceChunk.id);
+      const el = document.getElementById(`chunk-${evidenceChunk.id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      setTimeout(() => {
+        setHighlightedChunkId(null);
+      }, 2500);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
@@ -102,7 +122,7 @@ export default function IncidentDetailsPage() {
       <div className="flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <Link
-            href={`/${orgSlug}/projects/${projectSlug}/incidents`}
+            href={`/${orgSlug}/incidents`}
             className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 transition"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -160,10 +180,15 @@ export default function IncidentDetailsPage() {
               incident.contextChunks.map((chunk: any) => (
                 <div
                   key={chunk.id}
-                  className={`group relative p-4.5 rounded-xl border transition ${
+                  id={`chunk-${chunk.id}`}
+                  className={`group relative p-4.5 rounded-xl border transition-all duration-300 ${
                     chunk.justifies
                       ? 'bg-red-500/5 border-red-500/15'
                       : 'bg-slate-900/20 border-slate-850'
+                  } ${
+                    chunk.id === highlightedChunkId
+                      ? 'ring-2 ring-indigo-500 border-transparent scale-[1.01] shadow-lg shadow-indigo-500/10'
+                      : ''
                   }`}
                 >
                   {/* Floating byte offsets badge */}
@@ -207,9 +232,24 @@ export default function IncidentDetailsPage() {
                 Gemini Classification
               </span>
               <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-900/80">
-                <p className="text-sm font-semibold text-slate-200">
+                <p className="text-sm font-bold text-slate-200">
                   {incident.classification || 'Unclassified Stack trace'}
                 </p>
+                <div className="flex items-center justify-between gap-2 mt-2">
+                  <span className="text-[10px] text-slate-400 font-semibold">
+                    Severity: <strong className="text-amber-500 font-bold">{incident.severity}</strong>
+                  </span>
+                  
+                  {incident.contextChunks?.some((c: any) => c.justifies) && (
+                    <button
+                      onClick={handleJumpToEvidence}
+                      className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1 transition"
+                    >
+                      <Terminal className="w-3 h-3" />
+                      Jump to Evidence
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -223,7 +263,7 @@ export default function IncidentDetailsPage() {
                   value={rootCause}
                   onChange={(e) => setRootCause(e.target.value)}
                   placeholder="Root cause hints details..."
-                  rows={4}
+                  rows={3}
                   className="w-full px-4 py-3 rounded-xl bg-slate-950/60 border border-slate-900 focus:border-indigo-500 outline-none text-slate-200 text-xs transition leading-relaxed resize-none"
                 />
               </div>
@@ -236,7 +276,7 @@ export default function IncidentDetailsPage() {
                   value={suggestedFix}
                   onChange={(e) => setSuggestedFix(e.target.value)}
                   placeholder="Steps to resolve build failure..."
-                  rows={4}
+                  rows={3}
                   className="w-full px-4 py-3 rounded-xl bg-slate-950/60 border border-slate-900 focus:border-indigo-500 outline-none text-slate-200 text-xs transition leading-relaxed resize-none"
                 />
               </div>
@@ -261,6 +301,39 @@ export default function IncidentDetailsPage() {
                 </button>
               </div>
             </form>
+
+            {/* Similar Past Incidents panel */}
+            <div className="space-y-3 pt-4 border-t border-slate-800/80">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                Similar Past Incidents
+              </span>
+              
+              {similarIncidents.length === 0 ? (
+                <p className="text-xs text-slate-500 italic">No similar historical failures found.</p>
+              ) : (
+                <div className="space-y-2.5">
+                  {similarIncidents.slice(0, 3).map((item: any) => (
+                    <Link
+                      key={item.id}
+                      href={`/${orgSlug}/projects/${projectSlug}/incidents/${item.id}`}
+                      className="block p-3 rounded-xl bg-slate-950/40 border border-slate-900/80 hover:border-indigo-500/20 hover:bg-slate-900/20 transition text-left group"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-slate-350 group-hover:text-indigo-400 truncate">
+                          {item.title}
+                        </span>
+                        <span className="text-[9px] font-bold text-indigo-400 bg-indigo-500/5 border border-indigo-500/10 px-1.5 py-0.5 rounded">
+                          {Math.round(item.similarity * 100)}% Match
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-1 font-mono">
+                        Incident ID: #{item.id.slice(0, 8)}
+                      </p>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
