@@ -27,6 +27,7 @@ import { Reflector } from '@nestjs/core';
 import { auth } from '@platform/auth';
 import { OrgsService } from '../modules/orgs/orgs.service';
 import { GithubService } from '../modules/github/github.service';
+import { WebhooksService } from '../modules/webhooks/webhooks.service';
 
 // Helper to mock NestJS ExecutionContext
 function createMockExecutionContext(request: any, handler?: any): ExecutionContext {
@@ -655,6 +656,206 @@ async function runIsolationSuite() {
 
   // Restore fetch
   globalThis.fetch = originalFetch;
+
+  // --- TEST CASE 14: GITHUB APP WEBHOOK INGESTION (VERIFY, REPLAY, DUPLICATE, ENQUEUE, WebhookDelivery LOGS) ---
+  console.log('Test Case 14: GitHub App Webhook Ingestion');
+
+  // We mock a project in orgA and associate it with githubRepoId 505
+  const webhookProject = await unsafeUnscopedClient.project.create({
+    data: {
+      id: 'webhook-project-a',
+      organizationId: orgA.id,
+      name: 'Webhook Project A',
+      slug: 'webhook-project-a',
+      githubRepoId: 505n,
+      webhookSecret: 'generic-secret',
+    },
+  });
+
+  // Re-seed GithubInstallation under orgA
+  await unsafeUnscopedClient.githubInstallation.create({
+    data: {
+      id: crypto.randomUUID(),
+      organizationId: orgA.id,
+      installationId: 5005n,
+      accountLogin: 'mock-login',
+      accountType: 'Organization',
+      repositorySelection: 'all',
+      createdAt: new Date(),
+    },
+  });
+
+  const webhooksService = new WebhooksService(mockRedis);
+
+  // 14a. Invalid signature check
+  const githubPayloadStr = JSON.stringify({
+    action: 'completed',
+    installation: { id: 5005 },
+    repository: { id: 505, name: 'repo-a', owner: { login: 'mock-login' } },
+    workflow_run: { id: 8888, conclusion: 'failure', updated_at: new Date().toISOString() },
+  });
+
+  await assert.rejects(
+    async () => {
+      await webhooksService.processGithubWebhook(Buffer.from(githubPayloadStr, 'utf8'), {
+        'x-github-delivery': 'delivery-id-1',
+        'x-github-event': 'workflow_run',
+        'x-hub-signature-256': 'sha256=invalidsignature',
+      });
+    },
+    /Invalid signature matching/i,
+    "Invalid signature did not throw!"
+  );
+
+  // Check that the failed delivery was recorded
+  const failedLog = await unsafeUnscopedClient.webhookDelivery.findFirst({
+    where: { deliveryId: 'delivery-id-1' },
+  });
+  assert.ok(failedLog);
+  assert.strictEqual(failedLog.status, 'FAILED_VERIFICATION');
+
+  // 14b. Replay protection check
+  const oldGithubPayloadStr = JSON.stringify({
+    action: 'completed',
+    installation: { id: 5005 },
+    repository: { id: 505, name: 'repo-a', owner: { login: 'mock-login' } },
+    workflow_run: { id: 8888, conclusion: 'failure', updated_at: new Date(Date.now() - 10 * 60 * 1000).toISOString() }, // 10 minutes ago
+  });
+
+  // Create signature for old payload
+  const sigHmacOld = crypto.createHmac('sha256', process.env.GITHUB_APP_WEBHOOK_SECRET || 'webhook_secret');
+  sigHmacOld.update(oldGithubPayloadStr);
+  const oldSignatureHeader = 'sha256=' + sigHmacOld.digest('hex');
+
+  await assert.rejects(
+    async () => {
+      await webhooksService.processGithubWebhook(Buffer.from(oldGithubPayloadStr, 'utf8'), {
+        'x-github-delivery': 'delivery-id-2',
+        'x-github-event': 'workflow_run',
+        'x-hub-signature-256': oldSignatureHeader,
+      });
+    },
+    /older than 5 minutes/i,
+    "Older webhook delivery was not rejected!"
+  );
+
+  const replayLog = await unsafeUnscopedClient.webhookDelivery.findFirst({
+    where: { deliveryId: 'delivery-id-2' },
+  });
+  assert.ok(replayLog);
+  assert.strictEqual(replayLog.status, 'REJECTED_REPLAY');
+
+  // 14c. Valid signature, timestamp, duplicate & BullMQ check
+  // Mock BullMQ add method to intercept enqueued job
+  let enqueuedJobData: any = null;
+  (webhooksService as any).triageQueue = {
+    add: async (name: string, data: any) => {
+      enqueuedJobData = data;
+      return { id: 'job-id' };
+    },
+  } as any;
+
+  const validHmac = crypto.createHmac('sha256', process.env.GITHUB_APP_WEBHOOK_SECRET || 'webhook_secret');
+  validHmac.update(githubPayloadStr);
+  const validSignatureHeader = 'sha256=' + validHmac.digest('hex');
+
+  const outcomeSuccess = await webhooksService.processGithubWebhook(Buffer.from(githubPayloadStr, 'utf8'), {
+    'x-github-delivery': 'delivery-id-3',
+    'x-github-event': 'workflow_run',
+    'x-hub-signature-256': validSignatureHeader,
+  });
+
+  assert.strictEqual(outcomeSuccess.status, 202);
+  // Verify BullMQ job has explicit organizationId and projectId
+  assert.ok(enqueuedJobData);
+  assert.strictEqual(enqueuedJobData.organizationId, orgA.id);
+  assert.strictEqual(enqueuedJobData.projectId, webhookProject.id);
+
+  // Verify successful delivery logging
+  const successLog = await unsafeUnscopedClient.webhookDelivery.findFirst({
+    where: { deliveryId: 'delivery-id-3' },
+  });
+  assert.ok(successLog);
+  assert.strictEqual(successLog.status, 'SUCCESS');
+  assert.strictEqual(successLog.payload, githubPayloadStr);
+
+  // Try delivering duplicate delivery ID: should return 202 directly and not trigger a second job
+  enqueuedJobData = null;
+  const duplicateOutcome = await webhooksService.processGithubWebhook(Buffer.from(githubPayloadStr, 'utf8'), {
+    'x-github-delivery': 'delivery-id-3', // Same ID
+    'x-github-event': 'workflow_run',
+    'x-hub-signature-256': validSignatureHeader,
+  });
+  assert.strictEqual(duplicateOutcome.status, 202);
+  assert.strictEqual(enqueuedJobData, null, "Duplicate delivery triggered another BullMQ job!");
+
+  // --- TEST CASE 15: GENERIC HMAC WEBHOOK INGESTION ---
+  console.log('Test Case 15: Generic HMAC Webhook Ingestion');
+
+  const genericPayloadStr = JSON.stringify({
+    runId: 9999,
+    owner: 'mock-login',
+    repo: 'repo-a',
+  });
+
+  // 15a. Unknown projectId throws 401 Unauthorized
+  await assert.rejects(
+    async () => {
+      await webhooksService.processGenericWebhook('unknown-project-id', Buffer.from(genericPayloadStr, 'utf8'), {
+        'x-delivery-id': 'delivery-gen-1',
+      });
+    },
+    /Unauthorized/i,
+    "Unknown generic project ID did not throw 401 Unauthorized!"
+  );
+
+  // 15b. Valid project, invalid signature
+  await assert.rejects(
+    async () => {
+      await webhooksService.processGenericWebhook(webhookProject.id, Buffer.from(genericPayloadStr, 'utf8'), {
+        'x-delivery-id': 'delivery-gen-2',
+        'x-signature-256': 'invalidsig',
+        'x-timestamp': Date.now().toString(),
+      });
+    },
+    /Invalid signature matching/i,
+    "Generic invalid signature did not throw!"
+  );
+
+  // 15c. Valid project, valid signature, duplicate, and BullMQ enqueuing
+  const genHmac = crypto.createHmac('sha256', webhookProject.webhookSecret);
+  genHmac.update(genericPayloadStr);
+  const genSignatureHeader = genHmac.digest('hex');
+
+  enqueuedJobData = null;
+  const genOutcome = await webhooksService.processGenericWebhook(webhookProject.id, Buffer.from(genericPayloadStr, 'utf8'), {
+    'x-delivery-id': 'delivery-gen-3',
+    'x-signature-256': genSignatureHeader,
+    'x-timestamp': Date.now().toString(),
+  });
+
+  assert.strictEqual(genOutcome.status, 202);
+  assert.ok(enqueuedJobData);
+  assert.strictEqual(enqueuedJobData.organizationId, orgA.id);
+  assert.strictEqual(enqueuedJobData.projectId, webhookProject.id);
+
+  // Verify generic success log
+  const genLog = await unsafeUnscopedClient.webhookDelivery.findFirst({
+    where: { deliveryId: 'delivery-gen-3' },
+  });
+  assert.ok(genLog);
+  assert.strictEqual(genLog.status, 'SUCCESS');
+
+  // --- TEST CASE 16: ADMIN WEBHOOK REDELIVERY ---
+  console.log('Test Case 16: Admin Webhook Redelivery');
+
+  enqueuedJobData = null;
+  const redeliverRes = await webhooksService.redeliverWebhook(successLog.id);
+  assert.ok(redeliverRes);
+  assert.strictEqual(redeliverRes.status, 'SUCCESS');
+  assert.ok(enqueuedJobData);
+  assert.strictEqual(enqueuedJobData.runId, 8888);
+  assert.strictEqual(enqueuedJobData.organizationId, orgA.id);
 
   console.log('--- ALL TENANT ISOLATION TESTS PASSED SUCCESSFULLY! ---');
 }

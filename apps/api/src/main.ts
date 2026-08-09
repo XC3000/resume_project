@@ -106,7 +106,7 @@ async function bootstrap() {
   // 4. Apply express.json() middleware for all other routes after mounting Better Auth.
   app.use('/api/auth', toNodeHandler(auth));
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (req.path === '/triage/webhooks/github' || req.path === '/github/webhooks') {
+    if (req.path.startsWith('/webhooks/') || req.path === '/triage/webhooks/github') {
       raw({ type: '*/*' })(req, res, next);
     } else {
       json()(req, res, next);

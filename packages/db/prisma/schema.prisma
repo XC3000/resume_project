@@ -326,6 +326,7 @@ model WebhookDelivery {
   deliveryId     String    @unique
   status         String
   error          String?
+  payload        String?
   receivedAt     DateTime  @default(now())
   project        Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 

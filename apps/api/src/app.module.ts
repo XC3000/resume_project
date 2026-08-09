@@ -5,9 +5,10 @@ import { TriageModule } from './modules/triage/triage.module';
 import { AuthModule } from './auth/auth.module';
 import { OrgsModule } from './modules/orgs/orgs.module';
 import { GithubModule } from './modules/github/github.module';
+import { WebhooksModule } from './modules/webhooks/webhooks.module';
 
 @Module({
-  imports: [AuthModule, TriageModule, OrgsModule, GithubModule],
+  imports: [AuthModule, TriageModule, OrgsModule, GithubModule, WebhooksModule],
   controllers: [AppController],
   providers: [AppService],
 })

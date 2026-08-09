@@ -77,59 +77,82 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processJob(job: Job) {
-    const { runId, owner, repo } = job.data;
+    const { runId, owner, repo, organizationId, projectId } = job.data;
     this.logger.log(`Processing log download for Run ID: ${runId} (Repo: ${owner}/${repo})`);
 
     // Use system database client for shared-schema queries
     const systemDb = scopedClient('system');
 
-    // 1. Map organization based on github repository owner slug
-    const ownerSlug = owner.toLowerCase();
-    let org = await systemDb.organization.findFirst({
-      where: { slug: ownerSlug },
-    });
+    let targetOrgId = organizationId;
+    let org;
 
-    let targetOrgId: string;
-    if (!org) {
-      this.logger.log(`No organization found for slug '${ownerSlug}'. Creating a default triage org.`);
-      const newOrg = await systemDb.organization.create({
-        data: {
-          id: crypto.randomUUID(),
-          name: `${owner} Triage Org`,
-          slug: ownerSlug,
-          kind: 'PERSONAL',
-          plan: 'FREE',
-          createdAt: new Date(),
-        },
+    if (!targetOrgId) {
+      // Fallback: Map organization based on github repository owner slug
+      const ownerSlug = owner.toLowerCase();
+      org = await systemDb.organization.findFirst({
+        where: { slug: ownerSlug },
       });
-      org = newOrg;
+
+      if (!org) {
+        this.logger.log(`No organization found for slug '${ownerSlug}'. Creating a default triage org.`);
+        const newOrg = await systemDb.organization.create({
+          data: {
+            id: crypto.randomUUID(),
+            name: `${owner} Triage Org`,
+            slug: ownerSlug,
+            kind: 'PERSONAL',
+            plan: 'FREE',
+            createdAt: new Date(),
+          },
+        });
+        org = newOrg;
+      }
+      targetOrgId = org.id;
+    } else {
+      org = await systemDb.organization.findUnique({
+        where: { id: targetOrgId },
+      });
+      if (!org) {
+        throw new Error(`Organization ${targetOrgId} not found`);
+      }
     }
-    targetOrgId = org.id;
 
     // Map project based on repository slug
     const db = scopedClient(targetOrgId);
+    let project;
 
-    const projectSlug = repo.toLowerCase();
-    let project = await db.project.findFirst({
-      where: {
-        organizationId: targetOrgId,
-        slug: projectSlug,
-      },
-    });
-
-    if (!project) {
-      this.logger.log(`No project found for slug '${projectSlug}'. Creating a default project.`);
-      project = await db.project.create({
-        data: {
-          id: crypto.randomUUID(),
+    if (projectId) {
+      project = await db.project.findUnique({
+        where: { id: projectId },
+      });
+    } else {
+      // Fallback: Map project based on repository slug
+      const projectSlug = repo.toLowerCase();
+      project = await db.project.findFirst({
+        where: {
           organizationId: targetOrgId,
-          name: repo,
           slug: projectSlug,
-          repoFullName: `${owner}/${repo}`,
-          webhookSecret: crypto.randomBytes(32).toString('hex'),
-          createdAt: new Date(),
         },
       });
+
+      if (!project) {
+        this.logger.log(`No project found for slug '${projectSlug}'. Creating a default project.`);
+        project = await db.project.create({
+          data: {
+            id: crypto.randomUUID(),
+            organizationId: targetOrgId,
+            name: repo,
+            slug: projectSlug,
+            repoFullName: `${owner}/${repo}`,
+            webhookSecret: crypto.randomBytes(32).toString('hex'),
+            createdAt: new Date(),
+          },
+        });
+      }
+    }
+
+    if (!project) {
+      throw new Error(`Project ${projectId || 'unknown'} not found under organization ${targetOrgId}`);
     }
 
     // 2. Determine GitHub OAuth Token (check org metadata or fall back to GITHUB_OAUTH_TOKEN env)
