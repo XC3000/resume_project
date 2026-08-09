@@ -6,6 +6,7 @@ import { RequireRole, Role } from '../../auth/require-role.decorator';
 import { OrgContext } from '../../auth/org-context';
 import { OrgsService } from './orgs.service';
 import { CreateOrgDto, UpdateOrgSettingsDto, CreateApiKeyDto, InviteMemberDto, AcceptInviteDto, TransferOwnershipDto } from './orgs.dto';
+import { scopedClient } from '@platform/db';
 
 @Controller('orgs')
 export class OrgsController {
@@ -134,5 +135,16 @@ export class OrgsController {
   async transferOwnership(@Req() req: any, @Body() dto: TransferOwnershipDto) {
     const activeOrgId = this.orgContext.getOrgId();
     return this.orgsService.transferOwnership(activeOrgId, req.user.id, dto.targetMemberId, dto.confirm);
+  }
+
+  @Get('usage')
+  @UseGuards(AuthGuard, OrgGuard)
+  async getLlmUsage() {
+    const activeOrgId = this.orgContext.getOrgId();
+    const db = scopedClient(activeOrgId);
+    return db.llmUsage.findMany({
+      orderBy: { day: 'desc' },
+      take: 30,
+    });
   }
 }

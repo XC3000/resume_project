@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ColdStartProvider } from "@/components/ColdStartProvider";
 
 export const metadata: Metadata = {
   title: "Triage AI - Automated Incident Triage & Root Cause Analysis",
@@ -23,7 +24,9 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen bg-[#060913] text-slate-100 font-sans selection:bg-cyan-500/20 selection:text-cyan-300">
-        {children}
+        <ColdStartProvider>
+          {children}
+        </ColdStartProvider>
       </body>
     </html>
   );

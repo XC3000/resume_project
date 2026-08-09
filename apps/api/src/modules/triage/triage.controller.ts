@@ -1,13 +1,20 @@
-import { Controller, Post, Req, Res, UnauthorizedException, HttpCode, HttpStatus, Logger } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Req, Res, Body, Param, UseGuards, UnauthorizedException, HttpCode, HttpStatus, Logger, NotFoundException } from '@nestjs/common';
 import { Request, Response } from 'express';
 import * as crypto from 'crypto';
 import { TriageService } from './triage.service';
+import { AuthGuard } from '../../auth/auth.guard';
+import { OrgGuard } from '../../auth/org.guard';
+import { OrgContext } from '../../auth/org-context';
+import { scopedClient } from '@platform/db';
 
 @Controller('triage')
 export class TriageController {
   private readonly logger = new Logger(TriageController.name);
 
-  constructor(private readonly triageService: TriageService) {}
+  constructor(
+    private readonly triageService: TriageService,
+    private readonly orgContext: OrgContext,
+  ) {}
 
   @Post('webhooks/github')
   @HttpCode(HttpStatus.OK)
@@ -82,5 +89,153 @@ export class TriageController {
     }
 
     return res.status(HttpStatus.OK).json({ processed: false, reason: 'Event is not a workflow run failure' });
+  }
+
+  @Get('projects')
+  @UseGuards(AuthGuard, OrgGuard)
+  async listProjects() {
+    const orgId = this.orgContext.getOrgId();
+    const db = scopedClient(orgId);
+    const projects = await db.project.findMany({
+      where: { archivedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    return projects.map((p) => ({
+      ...p,
+      githubRepoId: p.githubRepoId ? Number(p.githubRepoId) : null,
+    }));
+  }
+
+  @Post('projects')
+  @UseGuards(AuthGuard, OrgGuard)
+  async createProject(@Body() dto: { name: string; repoFullName: string; githubRepoId?: number }) {
+    const orgId = this.orgContext.getOrgId();
+    const db = scopedClient(orgId);
+    const slug = dto.name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+    
+    const existing = await db.project.findFirst({
+      where: { organizationId: orgId, slug },
+    });
+    
+    if (existing) {
+      return {
+        ...existing,
+        githubRepoId: existing.githubRepoId ? Number(existing.githubRepoId) : null,
+      };
+    }
+
+    const project = await db.project.create({
+      data: {
+        organizationId: orgId,
+        name: dto.name,
+        slug,
+        repoFullName: dto.repoFullName,
+        githubRepoId: dto.githubRepoId ? BigInt(dto.githubRepoId) : null,
+        webhookSecret: crypto.randomBytes(20).toString('hex'),
+      },
+    });
+
+    return {
+      ...project,
+      githubRepoId: project.githubRepoId ? Number(project.githubRepoId) : null,
+    };
+  }
+
+  @Get('projects/:projectSlug/incidents')
+  @UseGuards(AuthGuard, OrgGuard)
+  async listIncidents(@Param('projectSlug') projectSlug: string) {
+    const orgId = this.orgContext.getOrgId();
+    const db = scopedClient(orgId);
+    
+    const project = await db.project.findFirst({
+      where: { organizationId: orgId, slug: projectSlug },
+    });
+    
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+    
+    return db.incident.findMany({
+      where: { projectId: project.id },
+      orderBy: { detectedAt: 'desc' },
+    });
+  }
+
+  @Get('incidents/:id')
+  @UseGuards(AuthGuard, OrgGuard)
+  async getIncidentDetails(@Param('id') id: string) {
+    const orgId = this.orgContext.getOrgId();
+    const db = scopedClient(orgId);
+    
+    const incident = await db.incident.findUnique({
+      where: { id },
+      include: {
+        contextChunks: {
+          orderBy: { sequence: 'asc' },
+        },
+        project: true,
+      },
+    });
+    
+    if (!incident || incident.organizationId !== orgId) {
+      throw new NotFoundException('Incident not found');
+    }
+    
+    return {
+      ...incident,
+      project: incident.project ? {
+        ...incident.project,
+        githubRepoId: incident.project.githubRepoId ? Number(incident.project.githubRepoId) : null
+      } : null
+    };
+  }
+
+  @Post('incidents/:id/resolve')
+  @UseGuards(AuthGuard, OrgGuard)
+  async resolveIncident(@Param('id') id: string) {
+    const orgId = this.orgContext.getOrgId();
+    const db = scopedClient(orgId);
+    
+    const incident = await db.incident.findUnique({
+      where: { id },
+    });
+    
+    if (!incident || incident.organizationId !== orgId) {
+      throw new NotFoundException('Incident not found');
+    }
+    
+    return db.incident.update({
+      where: { id },
+      data: {
+        status: 'RESOLVED',
+        resolvedAt: new Date(),
+      },
+    });
+  }
+
+  @Patch('incidents/:id/analysis')
+  @UseGuards(AuthGuard, OrgGuard)
+  async updateIncidentAnalysis(
+    @Param('id') id: string,
+    @Body() dto: { rootCauseHint?: string; suggestedFix?: string }
+  ) {
+    const orgId = this.orgContext.getOrgId();
+    const db = scopedClient(orgId);
+    
+    const incident = await db.incident.findUnique({
+      where: { id },
+    });
+    
+    if (!incident || incident.organizationId !== orgId) {
+      throw new NotFoundException('Incident not found');
+    }
+    
+    return db.incident.update({
+      where: { id },
+      data: {
+        rootCauseHint: dto.rootCauseHint !== undefined ? dto.rootCauseHint : incident.rootCauseHint,
+        suggestedFix: dto.suggestedFix !== undefined ? dto.suggestedFix : incident.suggestedFix,
+      },
+    });
   }
 }
