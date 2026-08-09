@@ -28,7 +28,7 @@ export const auth = betterAuth({
     apiKey(),
   ],
   trustedOrigins: [
-    process.env.TRIAGE_WEB_URL || "http://localhost:3001",
+    process.env.WEB_URL || "http://localhost:3001",
     "http://localhost:3000",
     "http://localhost:3001",
   ].filter((origin): origin is string => !!origin),

@@ -94,7 +94,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  apps/triage-web:
+  apps/web:
     dependencies:
       '@platform/auth':
         specifier: workspace:*

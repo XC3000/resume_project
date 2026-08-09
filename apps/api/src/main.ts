@@ -81,7 +81,7 @@ async function bootstrap() {
   // Enable CORS with credentials allowed and origins read from env
   app.enableCors({
     origin: [
-      process.env.TRIAGE_WEB_URL || 'http://localhost:3001',
+      process.env.WEB_URL || 'http://localhost:3001',
       'http://localhost:3000',
       'http://localhost:3001',
     ],

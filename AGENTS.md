@@ -8,7 +8,7 @@ Postgres database and one NestJS backend service.
   live inside it as Nest modules. Do NOT create a second backend service, a
   separate worker app, or a standalone cron service. The deploy target has a
   750 instance-hour/month budget that only fits one service.
-- ONE Next.js 15 app (App Router): `apps/triage-web`.
+- ONE Next.js 15 app (App Router): `apps/web`.
 - Prisma is the only DB access layer. Schema lives ONLY in `packages/db`.
   No app defines its own schema or instantiates its own PrismaClient.
 - Single Postgres, two schemas: `shared`, `triage`.
@@ -24,7 +24,7 @@ Tailwind + shadcn/ui · Zod · BullMQ · ioredis · pgvector (halfvec, 768 dims)
 
 apps/
 api/ NestJS — src/modules/{auth,triage}/
-triage-web/ Next.js
+web/ Next.js
 packages/
 db/ Prisma schema + exported singleton client
 auth/ Better Auth server instance + typed client
