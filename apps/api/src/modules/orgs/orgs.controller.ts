@@ -1,11 +1,11 @@
-import { Controller, Post, Patch, Delete, Body, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../../auth/auth.guard';
 import { OrgGuard } from '../../auth/org.guard';
 import { RoleGuard } from '../../auth/role.guard';
 import { RequireRole, Role } from '../../auth/require-role.decorator';
 import { OrgContext } from '../../auth/org-context';
 import { OrgsService } from './orgs.service';
-import { CreateOrgDto, UpdateOrgSettingsDto } from './orgs.dto';
+import { CreateOrgDto, UpdateOrgSettingsDto, CreateApiKeyDto } from './orgs.dto';
 
 @Controller('orgs')
 export class OrgsController {
@@ -40,5 +40,29 @@ export class OrgsController {
   async deleteOrg() {
     const activeOrgId = this.orgContext.getOrgId();
     return this.orgsService.deleteOrg(activeOrgId);
+  }
+
+  @Post('keys')
+  @UseGuards(AuthGuard, OrgGuard, RoleGuard)
+  @RequireRole(Role.ADMIN)
+  async createApiKey(@Req() req: any, @Body() dto: CreateApiKeyDto) {
+    const activeOrgId = this.orgContext.getOrgId();
+    return this.orgsService.createApiKey(activeOrgId, req.user.id, dto.name, dto.scopes, dto.expiresAt);
+  }
+
+  @Get('keys')
+  @UseGuards(AuthGuard, OrgGuard, RoleGuard)
+  @RequireRole(Role.ADMIN)
+  async listApiKeys() {
+    const activeOrgId = this.orgContext.getOrgId();
+    return this.orgsService.listApiKeys(activeOrgId);
+  }
+
+  @Post('keys/:id/revoke')
+  @UseGuards(AuthGuard, OrgGuard, RoleGuard)
+  @RequireRole(Role.ADMIN)
+  async revokeApiKey(@Param('id') id: string) {
+    const activeOrgId = this.orgContext.getOrgId();
+    return this.orgsService.revokeApiKey(activeOrgId, id);
   }
 }

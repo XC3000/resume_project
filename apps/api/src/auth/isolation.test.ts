@@ -28,6 +28,8 @@ import { auth } from '@platform/auth';
 import { OrgsService } from '../modules/orgs/orgs.service';
 import { GithubService } from '../modules/github/github.service';
 import { WebhooksService } from '../modules/webhooks/webhooks.service';
+import { ApiKeyGuard } from './api-key.guard';
+import { REQUIRE_SCOPES_KEY } from './require-scopes.decorator';
 
 // Helper to mock NestJS ExecutionContext
 function createMockExecutionContext(request: any, handler?: any): ExecutionContext {
@@ -510,6 +512,14 @@ async function runIsolationSuite() {
       mockRedisStore.delete(key);
       return 1;
     },
+    incr: async (key: string) => {
+      const val = parseInt(mockRedisStore.get(key) || '0', 10) + 1;
+      mockRedisStore.set(key, val.toString());
+      return val;
+    },
+    expire: async (key: string, seconds: number) => {
+      return 1;
+    },
   } as any;
 
   // Stub global fetch
@@ -857,6 +867,112 @@ async function runIsolationSuite() {
   assert.ok(enqueuedJobData);
   assert.strictEqual(enqueuedJobData.runId, 8888);
   assert.strictEqual(enqueuedJobData.organizationId, orgA.id);
+
+  // --- TEST CASE 17: CUSTOM ORG API KEYS (CREATE, LIST, REVOKE) ---
+  console.log('Test Case 17: Custom Org API Keys (Create, List, Revoke)');
+
+  // Clear existing API keys
+  await unsafeUnscopedClient.apiKey.deleteMany({});
+
+  // 17a. Create API Key
+  const createKeyRes = await orgsService.createApiKey(orgA.id, userA.id, 'Production Key', ['incidents:read']);
+  assert.ok(createKeyRes);
+  assert.ok(createKeyRes.key.startsWith('itg_dev_') || createKeyRes.key.startsWith('itg_live_'));
+  assert.strictEqual(createKeyRes.name, 'Production Key');
+  assert.strictEqual(createKeyRes.prefix, createKeyRes.key.slice(0, 12));
+  assert.deepStrictEqual(createKeyRes.scopes, ['incidents:read']);
+
+  // Ensure key hash matches SHA-256 of raw key
+  const expectedHash = crypto.createHash('sha256').update(createKeyRes.key).digest('hex');
+  const storedKey = await unsafeUnscopedClient.apiKey.findUnique({
+    where: { id: createKeyRes.id },
+  });
+  assert.ok(storedKey);
+  assert.strictEqual(storedKey.hash, expectedHash);
+
+  // 17b. List API Keys
+  const listKeys = await orgsService.listApiKeys(orgA.id);
+  assert.strictEqual(listKeys.length, 1);
+  assert.strictEqual(listKeys[0].name, 'Production Key');
+  // Hash must be excluded in select
+  assert.strictEqual((listKeys[0] as any).hash, undefined);
+
+  // 17c. Revoke API Key
+  await orgsService.revokeApiKey(orgA.id, createKeyRes.id);
+  const checkRevoked = await unsafeUnscopedClient.apiKey.findUnique({
+    where: { id: createKeyRes.id },
+  });
+  assert.ok(checkRevoked?.revokedAt);
+
+  // --- TEST CASE 18: API KEY GUARD INTEGRATION ---
+  console.log('Test Case 18: ApiKeyGuard Integration');
+
+  // Create a new active key
+  const activeKeyRes = await orgsService.createApiKey(orgA.id, userA.id, 'Active Key', ['incidents:read', 'incidents:write']);
+  
+  const reflectorKeys = new Reflector();
+  const apiKeyGuard = new ApiKeyGuard(mockRedis, context, reflectorKeys);
+
+  // 18a. Pass-through when no headers
+  const mockReqNoHeaders = { headers: {} };
+  const canActivateNoHeaders = await apiKeyGuard.canActivate(createMockExecutionContext(mockReqNoHeaders));
+  assert.strictEqual(canActivateNoHeaders, true);
+
+  // 18b. Throws on invalid prefix
+  const mockReqInvalidKey = { headers: { 'x-api-key': 'invalid_prefix_key' } };
+  await assert.rejects(
+    async () => {
+      await apiKeyGuard.canActivate(createMockExecutionContext(mockReqInvalidKey));
+    },
+    /Invalid API key format/i,
+    "Invalid prefix format did not throw!"
+  );
+
+  // 18c. Throws on missing required scopes
+  const mockReqScopes = { headers: { 'x-api-key': activeKeyRes.key } };
+  const mockHandlerWithScopes = () => {};
+  // Annotate handler with 'projects:read' which our key does not have
+  Reflect.defineMetadata(REQUIRE_SCOPES_KEY, ['projects:read'], mockHandlerWithScopes);
+
+  await assert.rejects(
+    async () => {
+      await apiKeyGuard.canActivate(createMockExecutionContext(mockReqScopes, mockHandlerWithScopes));
+    },
+    /Insufficient API key permissions/i,
+    "Missing scopes did not throw ForbiddenException!"
+  );
+
+  // 18d. Access granted and OrgContext populates
+  const mockReqSuccess = { headers: { 'x-api-key': activeKeyRes.key } };
+  const mockHandlerSuccess = () => {};
+  Reflect.defineMetadata(REQUIRE_SCOPES_KEY, ['incidents:read'], mockHandlerSuccess);
+
+  // Clean rate limit redis entry for this key
+  mockRedisStore.clear();
+
+  const contextForGuard = new OrgContext();
+  const apiKeyGuardSuccess = new ApiKeyGuard(mockRedis, contextForGuard, reflectorKeys);
+
+  const canActivateSuccess = await apiKeyGuardSuccess.canActivate(
+    createMockExecutionContext(mockReqSuccess, mockHandlerSuccess)
+  );
+
+  assert.strictEqual(canActivateSuccess, true);
+  assert.strictEqual(contextForGuard.getOrgId(), orgA.id);
+  assert.strictEqual(contextForGuard.getRole(), 'admin');
+
+  // 18e. Rate limit enforcement
+  // Artificially flood rate limit key in mockRedisStore
+  const limitKey = `ratelimit:apikey:${activeKeyRes.id}:${Math.floor(Date.now() / 60000)}`;
+  mockRedisStore.set(limitKey, '101'); // Force exceed 100 limit
+
+  await assert.rejects(
+    async () => {
+      await apiKeyGuardSuccess.canActivate(createMockExecutionContext(mockReqSuccess, mockHandlerSuccess));
+    },
+    /API rate limit exceeded/i,
+    "Rate limiting did not throw 429 HttpException!"
+  );
 
   console.log('--- ALL TENANT ISOLATION TESTS PASSED SUCCESSFULLY! ---');
 }

@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { unsafeUnscopedClient } from '@platform/db';
+import { unsafeUnscopedClient, scopedClient } from '@platform/db';
 import * as crypto from 'crypto';
 
 const reservedSlugs = [
@@ -153,5 +153,84 @@ export class OrgsService {
     return {
       message: 'Organization deleted successfully.',
     };
+  }
+
+  async createApiKey(orgId: string, userId: string, name: string, scopes: string[], expiresAt?: string) {
+    if (!name || name.trim().length < 3) {
+      throw new BadRequestException('API Key name must be at least 3 characters long.');
+    }
+
+    const validScopes = ['incidents:read', 'incidents:write', 'projects:read', 'webhooks:write'];
+    for (const scope of scopes) {
+      if (!validScopes.includes(scope)) {
+        throw new BadRequestException(`Invalid scope: ${scope}`);
+      }
+    }
+
+    const env = process.env.NODE_ENV === 'production' ? 'live' : 'dev';
+    const randomPart = crypto.randomBytes(24).toString('base64url');
+    const rawKey = `itg_${env}_${randomPart}`;
+    const hash = crypto.createHash('sha256').update(rawKey).digest('hex');
+
+    const db = scopedClient(orgId);
+    const key = await db.apiKey.create({
+      data: {
+        id: crypto.randomUUID(),
+        organizationId: orgId,
+        name,
+        prefix: rawKey.slice(0, 12),
+        hash,
+        scopes,
+        createdByUserId: userId,
+        expiresAt: expiresAt ? new Date(expiresAt) : null,
+        createdAt: new Date(),
+      },
+    });
+
+    return {
+      id: key.id,
+      name: key.name,
+      prefix: key.prefix,
+      scopes: key.scopes,
+      expiresAt: key.expiresAt,
+      createdAt: key.createdAt,
+      key: rawKey, // Returned exactly once
+    };
+  }
+
+  async listApiKeys(orgId: string) {
+    const db = scopedClient(orgId);
+    return db.apiKey.findMany({
+      where: { revokedAt: null },
+      select: {
+        id: true,
+        organizationId: true,
+        name: true,
+        prefix: true,
+        scopes: true,
+        createdByUserId: true,
+        expiresAt: true,
+        lastUsedAt: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  async revokeApiKey(orgId: string, id: string) {
+    const db = scopedClient(orgId);
+    const key = await db.apiKey.findUnique({
+      where: { id },
+    });
+
+    if (!key) {
+      throw new NotFoundException('API Key not found.');
+    }
+
+    await db.apiKey.update({
+      where: { id },
+      data: { revokedAt: new Date() },
+    });
+
+    return { message: 'API Key revoked successfully.' };
   }
 }

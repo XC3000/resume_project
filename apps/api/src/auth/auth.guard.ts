@@ -6,6 +6,10 @@ import { auth } from '@platform/auth';
 export class AuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
+
+    if (request.apiKey) {
+      return true;
+    }
     
     // Better Auth's getSession expects headers to be converted using fromNodeHeaders
     const session = await auth.api.getSession({
