@@ -309,14 +309,14 @@ export class TriageProcessor implements OnModuleInit, OnModuleDestroy {
 
       this.logger.log('Calling incident classification LLM...');
       const classifierData = await this.classifierService.classifyIncident(
-        dbLogChunks.map((c) => ({ id: c.id, content: c.content, sequence: c.sequence })),
+        dbLogChunks.map((c: { id: string; content: string; sequence: number }) => ({ id: c.id, content: c.content, sequence: c.sequence })),
         similarIncidents.map((i) => ({
           id: i.id,
           classification: i.classification,
           severity: i.severity,
           rootCauseHint: i.rootCauseHint,
           suggestedFix: i.suggestedFix,
-          logChunks: i.logChunks.map((c) => ({ content: c.content })),
+          logChunks: i.logChunks.map((c: { content: string }) => ({ content: c.content })),
         }))
       );
 
