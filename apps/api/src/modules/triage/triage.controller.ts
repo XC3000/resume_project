@@ -296,7 +296,8 @@ export class TriageController {
     }
     
     const sigWithEmbedding = await db.$queryRaw<Array<{ embedding: string }>>`
-      SELECT "embedding"::text FROM "triage"."failure_signature" WHERE "id" = ${sig.id}
+      SELECT "embedding"::text FROM "triage"."failure_signature"
+      WHERE "id" = ${sig.id} AND "organizationId" = ${orgId}
     `;
     
     const embStr = sigWithEmbedding[0]?.embedding;
