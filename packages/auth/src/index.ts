@@ -116,6 +116,8 @@ export const auth = betterAuth({
     process.env.WEB_URL || "http://localhost:3001",
     "http://localhost:3000",
     "http://localhost:3001",
+    "https://f4e1-2409-40e0-11c4-1859-795b-a595-cc8b-bdf3.ngrok-free.app",
+    ...(process.env.TRUSTED_ORIGINS ? process.env.TRUSTED_ORIGINS.split(',') : []),
   ].filter((origin): origin is string => !!origin),
 
   databaseHooks: {
