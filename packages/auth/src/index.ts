@@ -95,8 +95,12 @@ export const auth = betterAuth({
   },
   socialProviders: {
     github: {
-      clientId: process.env.GITHUB_CLIENT_ID || 'placeholder_client_id',
-      clientSecret: process.env.GITHUB_CLIENT_SECRET || 'placeholder_client_secret',
+      get clientId() {
+        return process.env.GITHUB_CLIENT_ID || 'placeholder_client_id';
+      },
+      get clientSecret() {
+        return process.env.GITHUB_CLIENT_SECRET || 'placeholder_client_secret';
+      },
       scope: ["read:user", "user:email"], // Login only scopes (repository access managed via GitHub App)
     },
   },
