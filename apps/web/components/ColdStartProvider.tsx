@@ -22,7 +22,7 @@ export function ColdStartProvider({ children }: { children: React.ReactNode }) {
           if (next === 1 && !timeoutId) {
             timeoutId = setTimeout(() => {
               setIsWakingUp(true);
-            }, 1200);
+            }, 5000);
           }
           return next;
         });
