@@ -212,7 +212,7 @@ import { organizationClient } from "better-auth/client/plugins";
 import { apiKeyClient } from "@better-auth/api-key/client";
 
 export const authClient = createAuthClient({
-  baseURL: process.env.BETTER_AUTH_URL || "http://localhost:3000",
+  baseURL: process.env.NEXT_PUBLIC_API_URL || process.env.BETTER_AUTH_URL || "http://localhost:3000",
   plugins: [
     organizationClient({
       ac,
