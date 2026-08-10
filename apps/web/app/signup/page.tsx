@@ -40,8 +40,7 @@ export default function SignupPage() {
       if (res?.error) {
         setError(res.error.message || 'Failed to create an account.');
       } else {
-        router.refresh();
-        router.push('/');
+        window.location.href = '/';
       }
     } catch (err: any) {
       setError(err.message || 'An unexpected error occurred.');
