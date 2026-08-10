@@ -1,24 +1,18 @@
 {
-  "name": "platform",
+  "name": "triage-monorepo",
   "private": true,
-  "packageManager": "pnpm@9.2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/XC3000/resume_project.git"
-  },
-  "homepage": "https://github.com/XC3000/resume_project",
   "scripts": {
-    "build": "turbo run build",
-    "build:api": "turbo run db:generate && turbo run build --filter=@platform/api...",
-    "dev": "turbo run dev",
-    "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck",
-    "db:generate": "turbo run db:generate",
-    "db:migrate": "pnpm --filter db db:migrate",
-    "db:push": "pnpm --filter db db:push"
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "clean": "turbo clean"
   },
   "devDependencies": {
-    "turbo": "^2.0.14",
-    "typescript": "^5.5.4"
+    "turbo": "^2.0.0"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
