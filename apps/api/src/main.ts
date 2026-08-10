@@ -84,6 +84,7 @@ async function bootstrap() {
       process.env.WEB_URL || 'http://localhost:3001',
       'http://localhost:3000',
       'http://localhost:3001',
+      'https://f4e1-2409-40e0-11c4-1859-795b-a595-cc8b-bdf3.ngrok-free.app',
     ],
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Cookie'],
