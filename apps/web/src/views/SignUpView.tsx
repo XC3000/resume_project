@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from '@tanstack/react-router';
 import { useAuth } from '../context/AuthContext';
-import { User as UserIcon, Mail, Lock, Eye, EyeOff, Layers, ArrowRight, AlertCircle, ShieldCheck } from 'lucide-react';
+import { swaggerApiClient } from '../lib/swagger-client';
+import { User as UserIcon, Mail, Lock, Eye, EyeOff, Layers, AlertCircle, ShieldCheck } from 'lucide-react';
 
 export const SignUpView: React.FC = () => {
-  const { signUp, signInWithGithub } = useAuth();
+  const { signUp } = useAuth();
   const navigate = useNavigate();
 
   const [name, setName] = useState('');
@@ -13,7 +14,6 @@ export const SignUpView: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [agreeTerms, setAgreeTerms] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [githubLoading, setGithubLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSignUp = async (e: React.FormEvent) => {
@@ -38,14 +38,17 @@ export const SignUpView: React.FC = () => {
   };
 
   const handleGithubSignUp = async () => {
-    setError(null);
-    setGithubLoading(true);
-    const res = await signInWithGithub();
-    setGithubLoading(false);
-    if (res.success) {
-      navigate({ to: '/dashboard' });
-    } else {
-      setError(res.error || 'GitHub Authentication failed.');
+    try {
+      const data = await swaggerApiClient.auth.getGithubUrl();
+      if (data?.url && data?.clientId) {
+        window.location.href = data.url;
+        return;
+      }
+    } catch {
+      // Fallback to Vite environment variables
+      const clientId = import.meta.env.VITE_GITHUB_CLIENT_ID || '';
+      const callbackUrl = import.meta.env.VITE_GITHUB_CALLBACK_URL || `${window.location.origin}/api/auth/github/callback`;
+      window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=user:email`;
     }
   };
 
@@ -122,7 +125,7 @@ export const SignUpView: React.FC = () => {
         <button
           type="button"
           onClick={handleGithubSignUp}
-          disabled={githubLoading || loading}
+          disabled={loading}
           style={{
             width: '100%',
             height: '48px',
@@ -136,42 +139,27 @@ export const SignUpView: React.FC = () => {
             alignItems: 'center',
             justifyContent: 'center',
             gap: '12px',
-            cursor: githubLoading || loading ? 'not-allowed' : 'pointer',
+            cursor: loading ? 'not-allowed' : 'pointer',
             transition: 'all 0.2s ease',
             boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
           }}
           onMouseEnter={(e) => {
-            if (!githubLoading) {
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)';
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-            }
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)';
+            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)';
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
             e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
           }}
         >
-          {githubLoading ? (
-            <div
-              style={{
-                width: '20px',
-                height: '20px',
-                border: '2px solid rgba(255,255,255,0.3)',
-                borderTopColor: '#ffffff',
-                borderRadius: '50%',
-                animation: 'spin 0.8s linear infinite',
-              }}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path
+              fillRule="evenodd"
+              clipRule="evenodd"
+              d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"
             />
-          ) : (
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path
-                fillRule="evenodd"
-                clipRule="evenodd"
-                d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"
-              />
-            </svg>
-          )}
-          <span>{githubLoading ? 'Creating account via GitHub...' : 'Sign up with GitHub'}</span>
+          </svg>
+          <span>Sign up with GitHub</span>
         </button>
 
         {/* Divider */}
@@ -352,7 +340,7 @@ export const SignUpView: React.FC = () => {
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={loading || githubLoading}
+            disabled={loading}
             style={{
               marginTop: '8px',
               width: '100%',
@@ -367,7 +355,7 @@ export const SignUpView: React.FC = () => {
               alignItems: 'center',
               justifyContent: 'center',
               gap: '8px',
-              cursor: loading || githubLoading ? 'not-allowed' : 'pointer',
+              cursor: loading ? 'not-allowed' : 'pointer',
               boxShadow: '0 4px 15px rgba(168, 85, 247, 0.35)',
               transition: 'all 0.2s ease',
             }}

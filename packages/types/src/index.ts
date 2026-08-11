@@ -50,6 +50,12 @@ export interface GithubAuthRequest {
   code?: string;
 }
 
+export interface GithubUrlResponse {
+  url: string;
+  clientId: string;
+  callbackUrl: string;
+}
+
 export interface AuthResponse {
   token: string;
   user: AuthUser;

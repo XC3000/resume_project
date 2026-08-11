@@ -102,23 +102,99 @@ export class AuthService {
   }
 
   async githubAuth(code?: string): Promise<{ token: string; user: AuthUser }> {
+    if (!code) {
+      throw new BadRequestException('GitHub authorization code is required for authentication.');
+    }
+
+    const clientId = process.env.GITHUB_CLIENT_ID;
+    const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+    const callbackUrl = process.env.GITHUB_CALLBACK_URL || 'https://8a91-2409-40e0-11c4-1859-d49f-f196-77a6-baaf.ngrok-free.app/api/auth/github/callback';
+
+    if (!clientId || !clientSecret || clientId === 'YOUR_GITHUB_CLIENT_ID') {
+      throw new BadRequestException('GitHub OAuth credentials are not properly configured on server.');
+    }
+
+    this.logger.log(`Exchanging GitHub OAuth code with GitHub API...`);
+
+    const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        redirect_uri: callbackUrl,
+      }),
+    });
+
+    const tokenData = await tokenRes.json();
+
+    if (!tokenData.access_token) {
+      this.logger.error(`GitHub token exchange error: ${JSON.stringify(tokenData)}`);
+      throw new UnauthorizedException(tokenData.error_description || 'GitHub OAuth authorization failed.');
+    }
+
+    const accessToken = tokenData.access_token;
+
+    // Fetch user profile from GitHub API
+    const profileRes = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'User-Agent': 'Triage-AI-App',
+      },
+    });
+    const profile = await profileRes.json();
+
+    if (!profile || !profile.id) {
+      throw new UnauthorizedException('Failed to retrieve GitHub user profile.');
+    }
+
+    // Fetch user emails if profile email is null
+    let primaryEmail = profile.email;
+    if (!primaryEmail) {
+      try {
+        const emailsRes = await fetch('https://api.github.com/user/emails', {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'User-Agent': 'Triage-AI-App',
+          },
+        });
+        const emails = await emailsRes.json();
+        if (Array.isArray(emails)) {
+          const primary = emails.find((e: any) => e.primary) || emails[0];
+          if (primary?.email) primaryEmail = primary.email;
+        }
+      } catch (e) {
+        this.logger.warn(`Could not fetch GitHub user emails: ${(e as Error).message}`);
+      }
+    }
+
+    const userEmail = (primaryEmail || `${profile.login}@users.noreply.github.com`).toLowerCase();
+
     const githubUser: AuthUser = {
-      id: `gh_${randomBytes(8).toString('hex')}`,
-      name: 'Alex Vance',
-      email: 'alex.vance@github.com',
-      username: 'alexvance-dev',
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80',
+      id: `gh_${profile.id}`,
+      name: profile.name || profile.login,
+      email: userEmail,
+      username: profile.login,
+      avatar: profile.avatar_url,
       provider: 'github',
-      bio: 'Open Source Contributor • Triage AI Maintainer',
-      location: 'Seattle, WA',
-      publicRepos: 48,
+      bio: profile.bio || 'GitHub Authenticated User',
+      location: profile.location || 'Remote',
+      publicRepos: profile.public_repos || 0,
       createdAt: new Date().toISOString(),
     };
+
+    // Save user in Upstash Redis
+    const emailKey = `user:email:${userEmail}`;
+    await this.redisService.set(emailKey, JSON.stringify(githubUser), 86400 * 30);
 
     const token = this.generateToken();
     await this.createSession(token, githubUser);
 
-    this.logger.log(`GitHub Auth session created for ${githubUser.username} in Upstash Redis.`);
+    this.logger.log(`Live GitHub OAuth authenticated user ${githubUser.username} (${githubUser.email}).`);
     return { token, user: githubUser };
   }
 

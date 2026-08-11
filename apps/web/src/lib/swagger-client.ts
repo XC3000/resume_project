@@ -4,6 +4,7 @@ import {
   RegisterRequest,
   LoginRequest,
   GithubAuthRequest,
+  GithubUrlResponse,
   LogoutResponse,
   HealthCheckResponse,
   CacheTestResponse,
@@ -17,6 +18,10 @@ import {
  */
 export const swaggerApiClient = {
   auth: {
+    getGithubUrl: async (): Promise<GithubUrlResponse> => {
+      const res = await api.get<GithubUrlResponse>('/auth/github/url');
+      return res.data;
+    },
     register: async (data: RegisterRequest): Promise<AuthResponse> => {
       const res = await api.post<AuthResponse>('/auth/register', data);
       return res.data;

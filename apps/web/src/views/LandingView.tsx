@@ -28,10 +28,7 @@ export const LandingView: React.FC = () => {
     if (user) {
       navigate({ to: '/dashboard' });
     } else {
-      const res = await signInWithGithub();
-      if (res.success) {
-        navigate({ to: '/dashboard' });
-      }
+      await signInWithGithub();
     }
   };
 

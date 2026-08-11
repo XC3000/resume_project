@@ -1,5 +1,5 @@
-import { Controller, Post, Get, Body, Req, Res, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiCookieAuth, ApiBearerAuth } from '@nestjs/swagger';
+import { Controller, Post, Get, Body, Req, Res, Query, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiCookieAuth, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
 import { RegisterDto, LoginDto, GithubAuthDto, AuthResponseDto, LogoutResponseDto } from './dto/auth.dto';
@@ -11,6 +11,34 @@ const COOKIE_NAME = 'triage_ai_session';
 @Controller('api/auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  @ApiOperation({ summary: 'Get GitHub OAuth authorization URL' })
+  @Get('github/url')
+  getGithubUrl() {
+    const clientId = process.env.GITHUB_CLIENT_ID || 'Iv23lifsMCvY59WADoB6';
+    const callbackUrl = process.env.GITHUB_CALLBACK_URL || 'https://8a91-2409-40e0-11c4-1859-d49f-f196-77a6-baaf.ngrok-free.app/api/auth/github/callback';
+    const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=user:email`;
+    return { url, clientId, callbackUrl };
+  }
+
+  @ApiOperation({ summary: 'GitHub OAuth Callback Endpoint' })
+  @ApiQuery({ name: 'code', required: true })
+  @Get('github/callback')
+  async githubCallback(
+    @Query('code') code: string,
+    @Res() res: Response,
+  ) {
+    if (!code) {
+      return res.redirect('/signin?error=github_no_code');
+    }
+    try {
+      const result = await this.authService.githubAuth(code);
+      this.setSessionCookie(res, result.token);
+      return res.redirect('/dashboard');
+    } catch (err) {
+      return res.redirect('/signin?error=github_auth_failed');
+    }
+  }
 
   @ApiOperation({ summary: 'Register a new user account', description: 'Creates a user, establishes Upstash Redis session, and sets session cookie.' })
   @ApiResponse({ status: 201, description: 'User registered successfully', type: AuthResponseDto })

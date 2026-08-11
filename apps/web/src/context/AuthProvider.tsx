@@ -65,21 +65,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signInWithGithub = async (): Promise<{ success: boolean; error?: string }> => {
-    setIsLoading(true);
     try {
-      const data = await swaggerApiClient.auth.github({ code: 'mock_code' });
-      setUser(data.user);
-      setToken(data.token);
-      setIsLoading(false);
-      return { success: true };
-    } catch (err) {
-      setIsLoading(false);
-      let message = 'GitHub auth failed.';
-      if (axios.isAxiosError(err) && err.response?.data?.message) {
-        message = String(err.response.data.message);
+      const data = await swaggerApiClient.auth.getGithubUrl();
+      if (data?.url && data?.clientId) {
+        window.location.href = data.url;
+        return { success: true };
       }
-      return { success: false, error: message };
+    } catch {
+      // Fallback
     }
+    const clientId = import.meta.env.VITE_GITHUB_CLIENT_ID || 'Iv23lifsMCvY59WADoB6';
+    const callbackUrl = import.meta.env.VITE_GITHUB_CALLBACK_URL || 'https://8a91-2409-40e0-11c4-1859-d49f-f196-77a6-baaf.ngrok-free.app/api/auth/github/callback';
+    window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=user:email`;
+    return { success: true };
   };
 
   const signOut = async () => {
