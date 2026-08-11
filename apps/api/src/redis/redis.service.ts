@@ -1,9 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Redis } from '@upstash/redis';
 
 @Injectable()
-export class RedisService {
-  private readonly logger = new Logger(RedisService.name);
+export class RedisService implements OnModuleInit {
+  private readonly logger = new Logger('UpstashRedis');
   private client: Redis | null = null;
   private memoryCache = new Map<string, string>();
 
@@ -14,12 +14,24 @@ export class RedisService {
     if (url && token) {
       try {
         this.client = new Redis({ url, token });
-        this.logger.log('Upstash Redis client initialized.');
       } catch (err) {
-        this.logger.error(`Failed to initialize Upstash Redis: ${(err as Error).message}`);
+        this.logger.error(`❌ [Upstash Redis] Failed to initialize client: ${(err as Error).message}`);
       }
     } else {
-      this.logger.warn('UPSTASH_REDIS_REST_URL or TOKEN not set. Falling back to in-memory store.');
+      this.logger.warn('⚠️ [Upstash Redis] REST URL or TOKEN not configured. Falling back to in-memory store.');
+    }
+  }
+
+  async onModuleInit() {
+    if (this.client) {
+      try {
+        const start = Date.now();
+        await this.client.ping();
+        const latency = Date.now() - start;
+        this.logger.log(`✅ [Upstash Redis] Connected to Upstash REST API successfully. Endpoint: ${process.env.UPSTASH_REDIS_REST_URL} (Ping: ${latency}ms)`);
+      } catch (err) {
+        this.logger.error(`❌ [Upstash Redis] Ping failed: ${(err as Error).message}`);
+      }
     }
   }
 
@@ -46,11 +58,13 @@ export class RedisService {
     const start = Date.now();
     try {
       await this.client.ping();
+      const latencyMs = Date.now() - start;
+      this.logger.log(`[Upstash Redis Healthcheck] Ping ok (${latencyMs}ms)`);
       return {
         status: 'connected' as const,
         message: 'Connected to Upstash Redis',
         timestamp: new Date().toISOString(),
-        latencyMs: Date.now() - start,
+        latencyMs,
       };
     } catch (error) {
       return {
@@ -64,10 +78,12 @@ export class RedisService {
   async get(key: string): Promise<string | null> {
     if (this.client) {
       try {
-        const val = await this.client.get<string>(key);
-        return val ? String(val) : null;
+        const val = await this.client.get<any>(key);
+        this.logger.log(`[Upstash Redis GET] key="${key}" -> ${val ? 'HIT' : 'MISS'}`);
+        if (val === null || val === undefined) return null;
+        return typeof val === 'object' ? JSON.stringify(val) : String(val);
       } catch (err) {
-        this.logger.error(`Redis get error: ${(err as Error).message}`);
+        this.logger.error(`[Upstash Redis GET Error] key="${key}": ${(err as Error).message}`);
       }
     }
     return this.memoryCache.get(key) || null;
@@ -77,9 +93,10 @@ export class RedisService {
     if (this.client) {
       try {
         await this.client.set(key, value, { ex: ttlSeconds });
+        this.logger.log(`[Upstash Redis SET] key="${key}" (TTL: ${ttlSeconds}s)`);
         return 'OK';
       } catch (err) {
-        this.logger.error(`Redis set error: ${(err as Error).message}`);
+        this.logger.error(`[Upstash Redis SET Error] key="${key}": ${(err as Error).message}`);
       }
     }
     this.memoryCache.set(key, value);

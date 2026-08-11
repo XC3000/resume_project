@@ -3,18 +3,21 @@ import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(PrismaService.name);
+  private readonly logger = new Logger('SupabasePostgres');
 
   async onModuleInit() {
     try {
       if (process.env.DATABASE_URL) {
         await this.$connect();
-        this.logger.log('Successfully connected to Supabase PostgreSQL via Prisma.');
+        const start = Date.now();
+        await this.$queryRaw`SELECT 1`;
+        const latency = Date.now() - start;
+        this.logger.log(`✅ [Supabase DB] Connected to Supabase PostgreSQL pooler successfully. (Ping: ${latency}ms)`);
       } else {
-        this.logger.warn('DATABASE_URL is not set. Skipping Prisma connection on init.');
+        this.logger.warn('⚠️ [Supabase DB] DATABASE_URL is not configured.');
       }
     } catch (error) {
-      this.logger.error(`Prisma connection error: ${(error as Error).message}`);
+      this.logger.error(`❌ [Supabase DB] Connection failure: ${(error as Error).message}`);
     }
   }
 
@@ -34,11 +37,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     const start = Date.now();
     try {
       await this.$queryRaw`SELECT 1`;
+      const latencyMs = Date.now() - start;
+      this.logger.log(`[Supabase DB Healthcheck] Ping ok (${latencyMs}ms)`);
       return {
         status: 'connected' as const,
         message: 'Connected to Supabase PostgreSQL',
         timestamp: new Date().toISOString(),
-        latencyMs: Date.now() - start,
+        latencyMs,
       };
     } catch (error) {
       return {

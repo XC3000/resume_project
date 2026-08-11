@@ -1,22 +1,15 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Card, StatusBadge, Button } from '@repo/ui';
-import { Database, UserCheck, ShieldAlert, RefreshCw } from 'lucide-react';
-
-interface UsersResponse {
-  source: string;
-  users: Array<{ id: string; name?: string; email: string; createdAt: string }>;
-  message?: string;
-  error?: string;
-}
+import { Database, ShieldAlert, RefreshCw } from 'lucide-react';
+import { swaggerApiClient } from '../lib/swagger-client';
+import { UsersResponse } from '@repo/types';
 
 export const UsersView: React.FC = () => {
   const { data, isLoading, refetch, isFetching } = useQuery<UsersResponse>({
     queryKey: ['users'],
     queryFn: async () => {
-      const res = await fetch('/api/users');
-      if (!res.ok) throw new Error('Failed to fetch users');
-      return res.json();
+      return swaggerApiClient.health.getUsers();
     },
   });
 

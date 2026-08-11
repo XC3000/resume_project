@@ -1,10 +1,12 @@
 import React from 'react';
 import { Outlet, Link, useLocation } from '@tanstack/react-router';
-import { Layers, Database, Zap, Cpu, Server } from 'lucide-react';
+import { Layers, Database, Zap, Cpu, Server, LogIn, UserPlus, LayoutDashboard, LogOut } from 'lucide-react';
 import { StatusBadge } from '@repo/ui';
+import { useAuth } from '../context/AuthContext';
 
 export const AppLayout: React.FC = () => {
   const location = useLocation();
+  const { user, signOut } = useAuth();
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -12,7 +14,7 @@ export const AppLayout: React.FC = () => {
       <header
         style={{
           borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-          background: 'rgba(11, 15, 25, 0.75)',
+          background: 'rgba(11, 15, 25, 0.85)',
           backdropFilter: 'blur(16px)',
           position: 'sticky',
           top: 0,
@@ -31,7 +33,7 @@ export const AppLayout: React.FC = () => {
           }}
         >
           {/* Logo & Stack Brand */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '12px', textDecoration: 'none' }}>
             <div
               style={{
                 width: '40px',
@@ -48,7 +50,7 @@ export const AppLayout: React.FC = () => {
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff' }}>Triage AI</h1>
+                <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>Triage AI</h1>
                 <span
                   style={{
                     fontSize: '0.7rem',
@@ -63,15 +65,16 @@ export const AppLayout: React.FC = () => {
                 </span>
               </div>
               <p style={{ fontSize: '0.75rem', color: '#9ca3af', margin: 0 }}>
-                React (Vite) • TanStack Router • NestJS • Supabase • Upstash Redis
+                Vite • TanStack Router • NestJS • Upstash Redis Auth
               </p>
             </div>
-          </div>
+          </Link>
 
           {/* Navigation Links */}
-          <nav style={{ display: 'flex', gap: '8px' }}>
+          <nav style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             {[
               { path: '/', label: 'Overview', icon: <Cpu size={16} /> },
+              { path: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} /> },
               { path: '/cache', label: 'Upstash Redis', icon: <Zap size={16} /> },
               { path: '/users', label: 'Supabase DB', icon: <Database size={16} /> },
             ].map((item) => {
@@ -84,7 +87,7 @@ export const AppLayout: React.FC = () => {
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '8px',
-                    padding: '8px 16px',
+                    padding: '8px 14px',
                     borderRadius: '8px',
                     fontSize: '0.875rem',
                     fontWeight: 600,
@@ -102,10 +105,98 @@ export const AppLayout: React.FC = () => {
             })}
           </nav>
 
-          {/* Target Host Badge */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Server size={16} color="#818cf8" />
-            <StatusBadge status="ok" label="Single Render Host" />
+          {/* Auth State Action Buttons / User Badge */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {user ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <Link
+                  to="/dashboard"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    background: 'rgba(255, 255, 255, 0.06)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    padding: '4px 12px 4px 6px',
+                    borderRadius: '20px',
+                    textDecoration: 'none',
+                    color: '#ffffff',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  <img
+                    src={user.avatar}
+                    alt={user.name}
+                    style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover' }}
+                  />
+                  <span>{user.name.split(' ')[0]}</span>
+                </Link>
+
+                <button
+                  onClick={() => signOut()}
+                  title="Sign Out"
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.15)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    color: '#fca5a5',
+                    borderRadius: '8px',
+                    padding: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  <LogOut size={16} />
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Link
+                  to="/signin"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                    color: '#e0e7ff',
+                    background: 'rgba(99, 102, 241, 0.15)',
+                    border: '1px solid rgba(99, 102, 241, 0.3)',
+                    textDecoration: 'none',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <LogIn size={16} />
+                  Sign In
+                </Link>
+
+                <Link
+                  to="/signup"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                    color: '#ffffff',
+                    background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                    border: 'none',
+                    textDecoration: 'none',
+                    boxShadow: '0 0 15px rgba(99, 102, 241, 0.3)',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <UserPlus size={16} />
+                  Sign Up
+                </Link>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -125,7 +216,7 @@ export const AppLayout: React.FC = () => {
           color: '#6b7280',
         }}
       >
-        Triage AI Monorepo • Powered by Vite, TanStack Query & NestJS
+        Triage AI Monorepo • Powered by Vite, TanStack Query, NestJS & Upstash Redis Auth
       </footer>
     </div>
   );

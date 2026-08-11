@@ -1,8 +1,10 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { HealthCheckResponse, CacheTestResponse } from '@repo/types';
 
+@ApiTags('System Health & Operations')
 @Controller('api')
 export class HealthController {
   private startTime = Date.now();
@@ -12,6 +14,8 @@ export class HealthController {
     private readonly redis: RedisService,
   ) {}
 
+  @ApiOperation({ summary: 'System Health Check', description: 'Returns system uptime and connection status for Supabase PostgreSQL and Upstash Redis.' })
+  @ApiResponse({ status: 200, description: 'Health check metrics' })
   @Get('health')
   async getHealth(): Promise<HealthCheckResponse> {
     const dbStatus = await this.prisma.checkHealth();
@@ -28,6 +32,10 @@ export class HealthController {
     };
   }
 
+  @ApiOperation({ summary: 'Upstash Redis Cache Test', description: 'Tests GET/SET operation against Upstash Redis REST cluster.' })
+  @ApiQuery({ name: 'key', required: false, example: 'sample-key' })
+  @ApiQuery({ name: 'val', required: false, example: 'Hello from Turborepo!' })
+  @ApiResponse({ status: 200, description: 'Cache test result' })
   @Get('cache-test')
   async testCache(@Query('key') key = 'sample-key', @Query('val') val = 'Hello from Turborepo!'): Promise<CacheTestResponse> {
     const cacheKey = `test:${key}`;
@@ -44,6 +52,8 @@ export class HealthController {
     };
   }
 
+  @ApiOperation({ summary: 'Supabase Users Endpoint', description: 'Queries registered user accounts from Supabase PostgreSQL.' })
+  @ApiResponse({ status: 200, description: 'User database query result' })
   @Get('users')
   async getUsers() {
     if (!process.env.DATABASE_URL) {
