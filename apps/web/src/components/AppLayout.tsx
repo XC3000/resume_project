@@ -1,12 +1,16 @@
 import React from 'react';
 import { Outlet, Link, useLocation } from '@tanstack/react-router';
-import { Layers, Database, Zap, Cpu, Server, LogIn, UserPlus, LayoutDashboard, LogOut } from 'lucide-react';
-import { StatusBadge } from '@repo/ui';
+import { Layers, Database, Zap, Cpu, LayoutDashboard, LogIn, UserPlus, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export const AppLayout: React.FC = () => {
   const location = useLocation();
   const { user, signOut } = useAuth();
+
+  // If on the /dashboard route, render the full-screen Shadcn Admin Kit Dashboard UI
+  if (location.pathname === '/dashboard') {
+    return <Outlet />;
+  }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
